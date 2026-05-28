@@ -25,13 +25,16 @@ add_library(version SHARED
     src/log.cpp
     src/config.cpp
     src/config_store.cpp
+    src/playback_dsp.cpp
     src/ring_buffer.cpp
+    src/subprocess.cpp
     src/audio_source_manager.cpp
     src/fmod/pe_image.cpp
     src/fmod/sig_scanner.cpp
     src/fmod/radio_discovery.cpp
     src/fmod/dsp_bridge.cpp
     src/fmod/dsp_control_loop.cpp
+    src/fmod/game_state_probe.cpp
     src/fmod/metadata_injector.cpp
     src/http/http_server.cpp
     src/sources/local_file_source.cpp
