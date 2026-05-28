@@ -44,14 +44,14 @@ constexpr FMODSig kAnchored[] = {
 constexpr uint32_t kFmodLoopNormal = 0x2;
 
 // FMOD_2D: switches the channel out of 3D spatialisation. Default path
-// (force_stereo) clears this bit and feeds stereo, so the channel plays
+// (force_stereo) sets this bit and feeds stereo, so the channel plays
 // back as a regular non-positional stereo source. When force_stereo is
-// off we set the bit and feed mono, because stereo into a 3D panner
+// off we clear the bit and feed mono, because stereo into a 3D panner
 // phase-cancels into a metallic mess.
 constexpr uint32_t kFmod2D = 0x8;
 
 inline uint32_t channel_mode(bool force_stereo) noexcept {
-    return kFmodLoopNormal | (force_stereo ? 0u : kFmod2D);
+    return kFmodLoopNormal | (force_stereo ? kFmod2D : 0u);
 }
 
 // Smooth saturation near full-scale. Transparent for |x| <= knee and
