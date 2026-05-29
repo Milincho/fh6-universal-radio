@@ -46,3 +46,4 @@ volume_normalization = false       # apply ReplayGain (local files) / EBU R128 l
 equalizer_enabled    = false
 equalizer_bands      = [0.0, 0.0, 0.0, 0.0, 0.0]   # 60/250/1000/4000/12000 Hz, [-6, +6] dB
 force_stereo_audio   = true        # off => mono (avoids metallic phase-cancellation on the 3D radio channel)
+prebuffer_next_track = true        # pre-spawn the next track's pipeline so transitions skip the "(loading)" gap
