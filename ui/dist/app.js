@@ -160,6 +160,7 @@ const SCHEMA = [
     ["equalizer_enabled",    "Equalizer",                 "checkbox"],
     ["equalizer_bands",      "Equalizer bands",           "bands"],
     ["force_stereo_audio",   "Force stereo audio",        "checkbox"],
+    ["prebuffer_next_track", "Pre-buffer next track",     "checkbox"],
   ]],
 ];
 

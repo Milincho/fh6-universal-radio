@@ -190,6 +190,7 @@ struct JellyfinSource::Pipe {
     std::uint64_t bytes_written = 0;
     std::atomic<std::uint64_t> position_ms{0};
     bool ended = false;
+    std::size_t for_queue_idx = 0;
 
     ~Pipe() {
         // Close the read side first so ffmpeg's next write returns
@@ -206,6 +207,7 @@ JellyfinSource::JellyfinSource(JellyfinConfig cfg, std::filesystem::path ffmpeg_
 
 JellyfinSource::~JellyfinSource() {
     std::scoped_lock lk{mu_};
+    discard_prefetch_locked();
     stop_pipe_locked();
 }
 
@@ -224,23 +226,25 @@ bool JellyfinSource::initialize() {
 
 void JellyfinSource::shutdown() noexcept {
     std::scoped_lock lk{mu_};
+    discard_prefetch_locked();
     stop_pipe_locked();
 }
 
-void JellyfinSource::start_pipe_locked() {
-    stop_pipe_locked();
-    if (queue_.empty() || current_idx_ >= queue_.size()) return;
+std::unique_ptr<JellyfinSource::Pipe>
+JellyfinSource::spawn_pipe_locked(std::size_t for_idx) {
+    if (queue_.empty() || for_idx >= queue_.size()) return nullptr;
 
     auto pipe = std::make_unique<Pipe>();
+    pipe->for_queue_idx = for_idx;
     pipe->job = create_kill_on_close_job();
     if (!pipe->job) {
         log::warn("[jellyfin] CreateJobObject failed ({})", GetLastError());
-        return;
+        return nullptr;
     }
 
     SECURITY_ATTRIBUTES sa{sizeof(sa), nullptr, TRUE};
     HANDLE out_r = nullptr, out_w = nullptr;
-    if (!CreatePipe(&out_r, &out_w, &sa, 1 << 20)) return;
+    if (!CreatePipe(&out_r, &out_w, &sa, 1 << 20)) return nullptr;
     SetHandleInformation(out_r, HANDLE_FLAG_INHERIT, 0);
 
     HANDLE nul_in  = open_nul(GENERIC_READ);
@@ -249,7 +253,7 @@ void JellyfinSource::start_pipe_locked() {
     const std::wstring ff = ffmpeg_path_.empty() ? std::wstring{L"ffmpeg"}
                                                  : ffmpeg_path_.wstring();
     const std::string stream_url = std::format("{}/Audio/{}/stream?static=true",
-                                                cfg_.server_url, queue_[current_idx_].id);
+                                                cfg_.server_url, queue_[for_idx].id);
     // Pass the API key via -headers so it isn't visible on the ffmpeg command
     // line to other local processes. \r\n is the canonical separator ffmpeg
     // expects between (and trailing) custom headers.
@@ -272,16 +276,50 @@ void JellyfinSource::start_pipe_locked() {
         CloseHandle(out_r);
         log::warn("[jellyfin] failed to launch ffmpeg -- {}",
                   describe_launch_failure(ff, ec, !ffmpeg_path_.empty()));
-        return;  // ~Pipe reaps the job
+        return nullptr;  // ~Pipe reaps the job
     }
 
     pipe->read_pipe = out_r;
-    pipe_           = std::move(pipe);
+    return pipe;
+}
+
+void JellyfinSource::start_pipe_locked() {
+    stop_pipe_locked();
+    pipe_ = spawn_pipe_locked(current_idx_);
 }
 
 void JellyfinSource::stop_pipe_locked() {
+    // Symmetric with YT: prefetch is preserved across stop_pipe_locked() so a
+    // pending promotion isn't dropped on re-spawn. stop()/shutdown() drop it
+    // explicitly.
     pipe_.reset();
     state_.store(PlaybackState::stopped, std::memory_order_release);
+}
+
+void JellyfinSource::discard_prefetch_locked() noexcept { prefetch_.reset(); }
+
+std::size_t JellyfinSource::next_queue_idx_locked() const noexcept {
+    if (queue_.empty()) return 0;
+    return (current_idx_ + 1) % queue_.size();
+}
+
+bool JellyfinSource::promote_prefetch_locked(std::size_t expected_idx) {
+    if (!prefetch_ || prefetch_->for_queue_idx != expected_idx) {
+        discard_prefetch_locked();
+        return false;
+    }
+    pipe_ = std::move(prefetch_);
+    return true;
+}
+
+void JellyfinSource::maybe_spawn_prefetch_locked() {
+    if (!prebuffer_next_.load(std::memory_order_acquire)) return;
+    if (prefetch_ || !pipe_ || queue_.size() < 2) return;
+    // Match YT's threshold: ~0.5 s of PCM proves the current pipe is viable
+    // before we commit a second ffmpeg.
+    constexpr std::uint64_t kViableBytes = 96 * 1024;
+    if (pipe_->bytes_written < kViableBytes) return;
+    prefetch_ = spawn_pipe_locked(next_queue_idx_locked());
 }
 
 void JellyfinSource::advance_locked(std::ptrdiff_t step) {
@@ -289,7 +327,12 @@ void JellyfinSource::advance_locked(std::ptrdiff_t step) {
     const auto n = (std::ptrdiff_t)queue_.size();
     auto i = (std::ptrdiff_t)current_idx_ + step;
     current_idx_ = (std::size_t)(((i % n) + n) % n);
-    start_pipe_locked();
+    if (step == 1 && promote_prefetch_locked(current_idx_)) {
+        // Promoted: pipe_ is the pre-warmed pipeline, no fresh spawn needed.
+    } else {
+        discard_prefetch_locked();   // backwards step invalidates the prefetch
+        start_pipe_locked();
+    }
     if (pipe_) state_.store(PlaybackState::playing, std::memory_order_release);
 }
 
@@ -306,6 +349,7 @@ void JellyfinSource::pause() {
 
 void JellyfinSource::stop() {
     std::scoped_lock lk{mu_};
+    discard_prefetch_locked();
     stop_pipe_locked();
     current_idx_ = 0;
 }
@@ -339,6 +383,7 @@ bool JellyfinSource::cast(std::string playlist_id) {
     queue_                = std::move(*tracks);
     current_idx_          = 0;
     if (cfg_.shuffle) shuffle_range(queue_, 0);
+    discard_prefetch_locked();   // stale: targets the old playlist
     start_pipe_locked();
     if (pipe_) state_.store(PlaybackState::playing, std::memory_order_release);
     return true;
@@ -365,6 +410,7 @@ void JellyfinSource::set_config(JellyfinConfig cfg) {
     cfg_ = std::move(cfg);
 
     if (tracks) {
+        discard_prefetch_locked();
         stop_pipe_locked();
         queue_       = std::move(*tracks);
         current_idx_ = 0;
@@ -375,6 +421,7 @@ void JellyfinSource::set_config(JellyfinConfig cfg) {
         }
     } else if (shuffle_flip && cfg_.shuffle) {
         shuffle_range(queue_, current_idx_ + 1);   // preserve the currently-playing track
+        discard_prefetch_locked();                  // next-idx URL just changed
     }
 }
 
@@ -390,6 +437,12 @@ void JellyfinSource::set_playback_options(const PlaybackConfig& opts) {
     }
     // loudnorm is in the ffmpeg argv; new state takes effect on the next track.
     volume_norm_.store(opts.volume_normalization, std::memory_order_release);
+    const bool prev = prebuffer_next_.exchange(opts.prebuffer_next_track,
+                                                std::memory_order_acq_rel);
+    if (prev && !opts.prebuffer_next_track) {
+        std::scoped_lock lk{mu_};
+        discard_prefetch_locked();
+    }
 }
 
 TrackInfo JellyfinSource::current_track() const {
@@ -463,6 +516,7 @@ void JellyfinSource::pump(RingBuffer& ring) {
         avail = avail > got ? avail - got : 0;
     }
     update_position();
+    maybe_spawn_prefetch_locked();
 }
 
 } // namespace fh6::sources

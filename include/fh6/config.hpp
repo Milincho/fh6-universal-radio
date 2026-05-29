@@ -14,6 +14,9 @@ struct PlaybackConfig {
     bool equalizer_enabled          = false;
     std::array<float, 5> equalizer_bands{}; // 60 / 250 / 1000 / 4000 / 12000 Hz, [-6, +6] dB
     bool force_stereo_audio         = true;
+    // Pre-spawn the next track's pipeline so transitions (skip / end-of-track)
+    // are instant.
+    bool prebuffer_next_track       = true;
 };
 
 struct GeneralConfig {

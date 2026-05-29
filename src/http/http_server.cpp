@@ -147,6 +147,7 @@ json config_to_json(const Config& c) {
              {"equalizer_enabled", c.playback.equalizer_enabled},
              {"equalizer_bands", c.playback.equalizer_bands},
              {"force_stereo_audio", c.playback.force_stereo_audio},
+             {"prebuffer_next_track", c.playback.prebuffer_next_track},
          }},
     };
 }
@@ -210,6 +211,8 @@ void apply_patch(Config& c, const json& j) {
             pull(*it, "volume_normalization", c.playback.volume_normalization);
         c.playback.force_stereo_audio =
             pull(*it, "force_stereo_audio", c.playback.force_stereo_audio);
+        c.playback.prebuffer_next_track =
+            pull(*it, "prebuffer_next_track", c.playback.prebuffer_next_track);
         c.playback.equalizer_enabled =
             pull(*it, "equalizer_enabled", c.playback.equalizer_enabled);
         if (auto bands = it->find("equalizer_bands");
