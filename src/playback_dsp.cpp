@@ -1,7 +1,6 @@
 #include "fh6/playback_dsp.hpp"
 
 #include <cctype>
-#include <cstring>
 #include <fstream>
 #include <limits>
 #include <string>

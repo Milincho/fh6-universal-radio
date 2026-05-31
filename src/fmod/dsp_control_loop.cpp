@@ -5,7 +5,6 @@
 #include "fh6/log.hpp"
 
 #include <chrono>
-#include <cstring>
 
 namespace fh6::fmod_bridge {
 
