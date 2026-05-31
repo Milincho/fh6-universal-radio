@@ -556,14 +556,13 @@ struct HttpServer::Impl {
             const auto media_session_id =
                 body.value("media_session_id", snap_before.external_audio.media_session_id);
             const auto enabled = body.value("enabled", snap_before.external_audio.enabled);
+            // store.patch() notifies the bridge observer synchronously, which
+            // (un)registers the source and pushes the new config via set_config.
             store.patch([&](Config& c) {
                 c.external_audio.enabled = enabled;
                 c.external_audio.endpoint_id = endpoint;
                 c.external_audio.media_session_id = media_session_id;
             });
-            if (auto* ext = find_typed<sources::ExternalAudioSource>("external_audio")) {
-                ext->reload_from_config();
-            }
             auto snap = store.snapshot();
             return ok(json{{"enabled", snap.external_audio.enabled},
                            {"endpoint_id", snap.external_audio.endpoint_id},

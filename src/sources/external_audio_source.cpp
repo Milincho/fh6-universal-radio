@@ -18,11 +18,7 @@
 #include <cstdio>
 #include <cstring>
 #include <cwctype>
-#include <filesystem>
-#include <fstream>
 #include <limits>
-#include <sstream>
-#include <optional>
 #include <string_view>
 
 namespace fh6::sources {
@@ -146,97 +142,6 @@ std::string endpoint_id(IMMDevice* device) {
  CoTaskMemString id;
  if (FAILED(device->GetId(id.put())) || !id.p) return {};
  return wide_to_utf8(id.p);
-}
-
-std::filesystem::path config_path() {
- wchar_t buf[MAX_PATH];
- DWORD n = GetModuleFileNameW(nullptr, buf, MAX_PATH);
- if (n == 0 || n >= MAX_PATH) return {};
- return std::filesystem::path{buf}.parent_path() / "fh6-radio" / "config.toml";
-}
-
-std::optional<std::string> parse_endpoint_id_from_config() {
- std::ifstream in{config_path(), std::ios::binary};
- if (!in) return std::nullopt;
-
- bool in_external = false;
- std::string line;
- while (std::getline(in, line)) {
-  auto comment = line.find('#');
-  if (comment != std::string::npos) line.resize(comment);
-
-  auto first = line.find_first_not_of(" \t\r\n");
-  if (first == std::string::npos) continue;
-  auto last = line.find_last_not_of(" \t\r\n");
-  line = line.substr(first, last - first + 1);
-
-  if (line.size() >= 3 && line.front() == '[' && line.back() == ']') {
-   in_external = (line == "[external_audio]");
-   continue;
-  }
-
-  if (!in_external) continue;
-  auto eq = line.find('=');
-  if (eq == std::string::npos) continue;
-  auto key = line.substr(0, eq);
-  key.erase(std::remove_if(key.begin(), key.end(), [](unsigned char c) { return std::isspace(c); }), key.end());
-  if (key != "endpoint_id") continue;
-
-  auto value = line.substr(eq + 1);
-  auto a = value.find_first_not_of(" \t\r\n");
-  auto b = value.find_last_not_of(" \t\r\n");
-  if (a == std::string::npos) return std::string{};
-  value = value.substr(a, b - a + 1);
-  if (value.size() >= 2 && ((value.front() == '\'' && value.back() == '\'') ||
-   (value.front() == '"' && value.back() == '"'))) {
-   value = value.substr(1, value.size() - 2);
-  }
-  return value;
- }
-
- return std::nullopt;
-}
-
-std::optional<std::string> parse_media_session_id_from_config() {
- std::ifstream in{config_path(), std::ios::binary};
- if (!in) return std::nullopt;
-
- bool in_external = false;
- std::string line;
- while (std::getline(in, line)) {
-  auto comment = line.find('#');
-  if (comment != std::string::npos) line.resize(comment);
-
-  auto first = line.find_first_not_of(" \t\r\n");
-  if (first == std::string::npos) continue;
-  auto last = line.find_last_not_of(" \t\r\n");
-  line = line.substr(first, last - first + 1);
-
-  if (line.size() >= 3 && line.front() == '[' && line.back() == ']') {
-   in_external = (line == "[external_audio]");
-   continue;
-  }
-
-  if (!in_external) continue;
-  auto eq = line.find('=');
-  if (eq == std::string::npos) continue;
-  auto key = line.substr(0, eq);
-  key.erase(std::remove_if(key.begin(), key.end(), [](unsigned char c) { return std::isspace(c); }), key.end());
-  if (key != "media_session_id") continue;
-
-  auto value = line.substr(eq + 1);
-  auto a = value.find_first_not_of(" \t\r\n");
-  auto b = value.find_last_not_of(" \t\r\n");
-  if (a == std::string::npos) return std::string{};
-  value = value.substr(a, b - a + 1);
-  if (value.size() >= 2 && ((value.front() == '\'' && value.back() == '\'') ||
-   (value.front() == '"' && value.back() == '"'))) {
-   value = value.substr(1, value.size() - 2);
-  }
-  return value;
- }
-
- return std::nullopt;
 }
 
 float clamp_sample(float v) noexcept {
@@ -462,8 +367,8 @@ struct Resampler {
  }
 };
 
-HRESULT get_configured_endpoint(IMMDeviceEnumerator* enumerator, IMMDevice** out_device) {
- const auto endpoint = parse_endpoint_id_from_config().value_or(std::string{});
+HRESULT get_configured_endpoint(IMMDeviceEnumerator* enumerator, const std::string& endpoint,
+ IMMDevice** out_device) {
  if (endpoint.empty()) {
   return enumerator->GetDefaultAudioEndpoint(eRender, eConsole, out_device);
  }
@@ -498,18 +403,6 @@ HRESULT get_configured_endpoint(IMMDeviceEnumerator* enumerator, IMMDevice** out
 }
 
 } // namespace
-
-std::string toml_quote(std::string_view s) {
- std::string out;
- out.reserve(s.size() + 2);
- out.push_back('"');
- for (char c : s) {
-  if (c == '\\' || c == '"') out.push_back('\\');
-  out.push_back(c);
- }
- out.push_back('"');
- return out;
-}
 
 std::vector<ExternalAudioDevice> enumerate_external_audio_devices() {
  std::vector<ExternalAudioDevice> out;
@@ -573,104 +466,33 @@ std::vector<ExternalAudioDevice> enumerate_external_audio_devices() {
  return out;
 }
 
-std::string external_audio_configured_endpoint() {
- return parse_endpoint_id_from_config().value_or(std::string{});
-}
-
-bool set_external_audio_configured_endpoint(std::string_view endpoint_id_value) {
- const auto path = config_path();
- if (path.empty()) return false;
-
- std::string content;
+void ExternalAudioSource::set_config(ExternalAudioConfig cfg) {
+ bool endpoint_changed;
  {
-  std::ifstream in{path, std::ios::binary};
-  if (in) {
-   std::ostringstream ss;
-   ss << in.rdbuf();
-   content = ss.str();
-  }
+  std::scoped_lock lk{meta_mu_};
+  endpoint_changed = endpoint_id_ != cfg.endpoint_id;
+  endpoint_id_ = std::move(cfg.endpoint_id);
+  media_session_id_ = std::move(cfg.media_session_id);
  }
 
- std::istringstream in{content};
- std::ostringstream out;
- std::string line;
- bool in_external = false;
- bool saw_external = false;
- bool wrote_enabled = false;
- bool wrote_endpoint = false;
-
- auto write_enabled_default = [&] {
-  out << "enabled = false\n";
-  wrote_enabled = true;
- };
-
- auto write_endpoint = [&] {
-  out << "endpoint_id = " << toml_quote(endpoint_id_value) << "\n";
-  wrote_endpoint = true;
- };
-
- while (std::getline(in, line)) {
-  std::string trimmed = line;
-  if (!trimmed.empty() && trimmed.back() == '\r') trimmed.pop_back();
-  auto first = trimmed.find_first_not_of(" \t");
-  auto last = trimmed.find_last_not_of(" \t");
-  trimmed = first == std::string::npos ? std::string{} : trimmed.substr(first, last - first + 1);
-
-  if (trimmed.size() >= 3 && trimmed.front() == '[' && trimmed.back() == ']') {
-   if (in_external) {
-    if (!wrote_enabled) write_enabled_default();
-    if (!wrote_endpoint) write_endpoint();
-   }
-   in_external = (trimmed == "[external_audio]");
-   wrote_enabled = false;
-   wrote_endpoint = false;
-   if (in_external) saw_external = true;
-   out << line << "\n";
-   continue;
-  }
-
-  if (in_external) {
-   auto eq = trimmed.find('=');
-   auto key = eq == std::string::npos ? trimmed : trimmed.substr(0, eq);
-   key.erase(std::remove_if(key.begin(), key.end(), [](unsigned char c) { return std::isspace(c); }), key.end());
-   if (key == "enabled") {
-    wrote_enabled = true;
-   }
-   if (key == "endpoint_id") {
-    write_endpoint();
-    continue;
-   }
-  }
-
-  out << line << "\n";
- }
-
- if (saw_external && in_external) {
-  if (!wrote_enabled) write_enabled_default();
-  if (!wrote_endpoint) write_endpoint();
- }
- if (!saw_external) {
-  if (!content.empty() && content.back() != '\n') out << "\n";
-  out << "\n[external_audio]\n";
-  write_enabled_default();
-  write_endpoint();
- }
-
- std::ofstream file{path, std::ios::binary | std::ios::trunc};
- if (!file) return false;
- file << out.str();
- return true;
-}
-
-void ExternalAudioSource::reload_from_config() {
- const bool was_playing = state_.load(std::memory_order_acquire) == PlaybackState::playing;
- if (was_playing) {
+ // Only the capture endpoint needs a worker restart; the media session is read
+ // live by current_track()/next()/previous(), so a change there costs nothing.
+ if (endpoint_changed && state_.load(std::memory_order_acquire) == PlaybackState::playing) {
   stop_worker();
   clear_queue();
   start_worker();
  }
 }
 
+std::string ExternalAudioSource::configured_endpoint() const {
+ std::scoped_lock lk{meta_mu_};
+ return endpoint_id_;
+}
+
+std::string ExternalAudioSource::configured_media_session() const {
+ std::scoped_lock lk{meta_mu_};
+ return media_session_id_;
+}
 
 ExternalAudioSource::~ExternalAudioSource() {
  shutdown();
@@ -715,11 +537,11 @@ void ExternalAudioSource::next() {
 }
 
 void ExternalAudioSource::previous() {
- (void)external_audio_media_session_previous(parse_media_session_id_from_config().value_or(std::string{}));
+ (void)external_audio_media_session_previous(configured_media_session());
 }
 
 bool ExternalAudioSource::skip_next() {
- return external_audio_media_session_next(parse_media_session_id_from_config().value_or(std::string{}));
+ return external_audio_media_session_next(configured_media_session());
 }
 
 void ExternalAudioSource::pump(RingBuffer& ring) {
@@ -739,13 +561,7 @@ void ExternalAudioSource::pump(RingBuffer& ring) {
   chunk.assign(pcm_queue_.begin() + static_cast<std::ptrdiff_t>(queue_offset_),
    pcm_queue_.begin() + static_cast<std::ptrdiff_t>(queue_offset_ + to_write));
   queue_offset_ += to_write;
-
-  if (queue_offset_ > 0 &&
-   (queue_offset_ >= pcm_queue_.size() / 2u || queue_offset_ > 32768u)) {
-   pcm_queue_.erase(pcm_queue_.begin(),
-    pcm_queue_.begin() + static_cast<std::ptrdiff_t>(queue_offset_));
-   queue_offset_ = 0;
-  }
+  compact_queue_locked();
  }
 
  if (!chunk.empty()) {
@@ -759,7 +575,7 @@ void ExternalAudioSource::pump(RingBuffer& ring) {
 
 TrackInfo ExternalAudioSource::current_track() const {
  const auto fallback_position = position_ms_.load(std::memory_order_acquire);
- const auto selected_session = parse_media_session_id_from_config().value_or(std::string{});
+ const auto selected_session = configured_media_session();
  if (auto t = external_audio_media_session_track(selected_session, fallback_position)) {
   if (t->album.empty()) t->album = "External Audio";
   return *t;
@@ -817,12 +633,7 @@ void ExternalAudioSource::append_pcm(const int16_t* data, std::size_t samples) {
  if (!data || samples == 0) return;
 
  std::scoped_lock lk{queue_mu_};
- if (queue_offset_ > 0 &&
-  (queue_offset_ >= pcm_queue_.size() / 2u || queue_offset_ > 32768u)) {
-  pcm_queue_.erase(pcm_queue_.begin(),
-   pcm_queue_.begin() + static_cast<std::ptrdiff_t>(queue_offset_));
-  queue_offset_ = 0;
- }
+ compact_queue_locked();
 
  const std::size_t queued = pcm_queue_.size() - queue_offset_;
  if (queued + samples > kMaxQueuedSamples) {
@@ -837,6 +648,17 @@ void ExternalAudioSource::clear_queue() {
  std::scoped_lock lk{queue_mu_};
  pcm_queue_.clear();
  queue_offset_ = 0;
+}
+
+// Drop already-consumed samples once they dominate the buffer, so the queue
+// doesn't grow unboundedly from the front. Caller must hold queue_mu_.
+void ExternalAudioSource::compact_queue_locked() {
+ if (queue_offset_ > 0 &&
+  (queue_offset_ >= pcm_queue_.size() / 2u || queue_offset_ > 32768u)) {
+  pcm_queue_.erase(pcm_queue_.begin(),
+   pcm_queue_.begin() + static_cast<std::ptrdiff_t>(queue_offset_));
+  queue_offset_ = 0;
+ }
 }
 
 void ExternalAudioSource::capture_loop() noexcept {
@@ -874,17 +696,19 @@ void ExternalAudioSource::capture_loop() noexcept {
  }
 
  ComPtr<IMMDevice> device;
- hr = get_configured_endpoint(enumerator.get(), device.put());
+ hr = get_configured_endpoint(enumerator.get(), configured_endpoint(), device.put());
  if (FAILED(hr) || !device) {
   set_error(hresult_string("Get audio endpoint", hr));
   co_uninit();
   return;
  }
 
+ std::string device_label;
  {
   auto name = friendly_name(device.get());
+  device_label = name.empty() ? "Default playback device" : std::move(name);
   std::scoped_lock lk{meta_mu_};
-  device_name_ = name.empty() ? "Default playback device" : std::move(name);
+  device_name_ = device_label;
  }
 
  ComPtr<IAudioClient> client;
@@ -938,7 +762,7 @@ void ExternalAudioSource::capture_loop() noexcept {
 
  log::info("[external_audio] capturing {} ch, {} Hz, {}-bit container / {}-bit valid {} from '{}'",
   input.channels, input.sample_rate, input.container_bits, input.valid_bits,
-  input.is_float ? "float" : "pcm", current_track().artist);
+  input.is_float ? "float" : "pcm", device_label);
 
  Resampler resampler;
  resampler.fmt = input;

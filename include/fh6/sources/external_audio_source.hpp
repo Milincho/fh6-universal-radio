@@ -1,6 +1,7 @@
 #pragma once
 
 #include "fh6/audio_source.hpp"
+#include "fh6/config.hpp"
 
 #include <atomic>
 #include <cstdint>
@@ -19,8 +20,6 @@ struct ExternalAudioDevice {
 };
 
 std::vector<ExternalAudioDevice> enumerate_external_audio_devices();
-std::string external_audio_configured_endpoint();
-bool set_external_audio_configured_endpoint(std::string_view endpoint_id);
 
 class ExternalAudioSource final : public IAudioSource {
 public:
@@ -40,7 +39,7 @@ public:
  void previous() override;
  bool skip_next() override;
  void pump(RingBuffer& ring) override;
- void reload_from_config();
+ void set_config(ExternalAudioConfig cfg);
 
  TrackInfo current_track() const override;
  PlaybackState playback_state() const noexcept override {
@@ -57,10 +56,16 @@ private:
 
  void append_pcm(const int16_t* data, std::size_t samples);
  void clear_queue();
+ void compact_queue_locked();
+
+ std::string configured_endpoint() const;
+ std::string configured_media_session() const;
 
  mutable std::mutex meta_mu_;
  std::string device_name_ = "Default playback device";
  std::string last_error_;
+ std::string endpoint_id_;
+ std::string media_session_id_;
 
  std::mutex queue_mu_;
  std::vector<int16_t> pcm_queue_;
