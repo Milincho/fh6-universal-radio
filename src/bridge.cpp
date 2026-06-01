@@ -4,6 +4,7 @@
 #include "fh6/log.hpp"
 #include "fh6/config.hpp"
 #include "fh6/config_store.hpp"
+#include "fh6/deps.hpp"
 #include "fh6/audio_source_manager.hpp"
 #include "fh6/fmod/dsp_bridge.hpp"
 #include "fh6/fmod/dsp_control_loop.hpp"
@@ -39,6 +40,16 @@ SpotifyConfig anchor_spotify(SpotifyConfig sp, const std::filesystem::path& data
     if (!sp.cache_dir.empty() && sp.cache_dir.is_relative())
         sp.cache_dir = data_dir / sp.cache_dir;
     return sp;
+}
+
+// Swap blank binary paths for the auto-downloaded copies. Returned to sources
+// only -- the stored config keeps the user's blanks so the dashboard still
+// shows "auto".
+Config with_resolved_bins(Config c, const DependencyManager& deps) {
+    c.general.ffmpeg_path       = deps.resolve(Tool::ffmpeg, c.general.ffmpeg_path);
+    c.youtube_music.yt_dlp_path = deps.resolve(Tool::yt_dlp, c.youtube_music.yt_dlp_path);
+    c.spotify.librespot_path    = deps.resolve(Tool::librespot, c.spotify.librespot_path);
+    return c;
 }
 
 std::string slurp(const std::filesystem::path& p) {
@@ -110,6 +121,8 @@ void run_bridge(HMODULE self) noexcept {
     const std::size_t ring_bytes = static_cast<std::size_t>(cfg.general.ring_buffer_mb) << 20;
     AudioSourceManager mgr{ring_bytes};
 
+    DependencyManager deps{data_dir / "bin"};
+
     // Register/unregister sources to match the enabled flags. Called at
     // startup and on every config change so toggling enabled adds/removes
     // the dashboard tile live, without a game restart.
@@ -150,7 +163,7 @@ void run_bridge(HMODULE self) noexcept {
         }
     };
 
-    sync_sources(cfg);
+    sync_sources(with_resolved_bins(cfg, deps));
 
     if (!mgr.switch_to(cfg.general.default_source) && !mgr.switch_to(cfg.general.fallback_source)) {
         log::warn("[bridge] neither default nor fallback source was registered");
@@ -167,7 +180,9 @@ void run_bridge(HMODULE self) noexcept {
 
     for (auto* s : mgr.sources_snapshot()) s->set_playback_options(cfg.playback);
 
-    store.on_change([&bridge, &mgr, &data_dir, sync_sources, ctrl_ptr = ctrl.get()](const Config& c) {
+    auto apply_config = [&bridge, &mgr, &data_dir, &deps, sync_sources,
+                         ctrl_ptr = ctrl.get()](const Config& raw) {
+        const Config c = with_resolved_bins(raw, deps);
         sync_sources(c);
         if (!mgr.active()) {
             if (!mgr.switch_to(c.general.default_source)) mgr.switch_to(c.general.fallback_source);
@@ -190,6 +205,7 @@ void run_bridge(HMODULE self) noexcept {
         if (auto* yt = dynamic_cast<sources::YouTubeMusicSource*>(mgr.find("youtube_music"))) {
             yt->set_shuffle(c.youtube_music.shuffle);
             yt->set_ffmpeg_path(c.general.ffmpeg_path);
+            yt->set_yt_dlp_path(c.youtube_music.yt_dlp_path);
         }
         if (auto* jf = dynamic_cast<sources::JellyfinSource*>(mgr.find("jellyfin"))) {
             jf->set_ffmpeg_path(c.general.ffmpeg_path);
@@ -204,9 +220,13 @@ void run_bridge(HMODULE self) noexcept {
 
         for (auto* s : mgr.sources_snapshot()) s->set_playback_options(c.playback);
         if (ctrl_ptr) ctrl_ptr->push_playback_options(c.playback);
-    });
+    };
+    store.on_change(apply_config);
 
-    http::HttpServer http{mgr, bridge, store, cfg.general.port, ui_dir};
+    // Re-resolve binary paths into the live sources once a download lands.
+    deps.start([&store, &apply_config] { apply_config(store.snapshot()); });
+
+    http::HttpServer http{mgr, bridge, store, cfg.general.port, ui_dir, deps};
     log::info("[bridge] running on port {}", cfg.general.port);
 
     for (;;) Sleep(60'000);

@@ -48,6 +48,7 @@ add_library(version SHARED
     src/log.cpp
     src/config.cpp
     src/config_store.cpp
+    src/deps.cpp
     src/playback_dsp.cpp
     src/ring_buffer.cpp
     src/subprocess.cpp

@@ -1,6 +1,7 @@
 #include "fh6/http/http_server.hpp"
 #include "fh6/audio_source_manager.hpp"
 #include "fh6/config_store.hpp"
+#include "fh6/deps.hpp"
 #include "fh6/fmod/dsp_bridge.hpp"
 #include "fh6/log.hpp"
 #include "fh6/sources/local_file_source.hpp"
@@ -370,14 +371,15 @@ struct HttpServer::Impl {
     AudioSourceManager& mgr;
     fmod_bridge::DSPBridge& bridge;
     ConfigStore& store;
+    DependencyManager& deps;
     std::filesystem::path ui_dist;
     std::atomic<bool> stopping{false};
     SOCKET srv_sock = INVALID_SOCKET;
     std::thread thr;
 
-    Impl(AudioSourceManager& m, fmod_bridge::DSPBridge& b, ConfigStore& s, uint16_t port,
-         std::filesystem::path dist)
-        : mgr{m}, bridge{b}, store{s}, ui_dist{std::move(dist)} {
+    Impl(AudioSourceManager& m, fmod_bridge::DSPBridge& b, ConfigStore& s, DependencyManager& d,
+         uint16_t port, std::filesystem::path dist)
+        : mgr{m}, bridge{b}, store{s}, deps{d}, ui_dist{std::move(dist)} {
         thr = std::thread{[this, port] { run(port); }};
     }
     ~Impl() {
@@ -512,6 +514,23 @@ struct HttpServer::Impl {
         if (m == "GET" && p == "/api/events")        return send_event_snapshot(client);
         if (m == "GET" && p == "/api/sources")       return ok(build_sources());
         if (m == "GET" && p == "/api/config")        return ok(config_to_json(store.snapshot()));
+        if (m == "GET" && p == "/api/deps") {
+            json tools = json::array();
+            for (const auto& d : deps.snapshot())
+                tools.push_back(json{
+                    {"name", d.name},
+                    {"present", d.managed_present},
+                    {"downloading", d.downloading},
+                    {"downloaded_bytes", d.downloaded_bytes},
+                    {"total_bytes", d.total_bytes},
+                    {"error", d.error},
+                });
+            return ok(json{{"tools", std::move(tools)}});
+        }
+        if (m == "POST" && p == "/api/deps/refresh") {
+            deps.retry();
+            return ok();
+        }
         if (m == "GET" && p == "/api/source/local_files/playlist") {
             auto* lf = find_typed<sources::LocalFileSource>("local_files");
             return lf ? ok(json{{"tracks", lf->playlist_snapshot()}})
@@ -685,8 +704,8 @@ struct HttpServer::Impl {
 };
 
 HttpServer::HttpServer(AudioSourceManager& mgr, fmod_bridge::DSPBridge& bridge, ConfigStore& cfg,
-                       uint16_t port, std::filesystem::path ui_dist)
-    : impl_{std::make_unique<Impl>(mgr, bridge, cfg, port, std::move(ui_dist))} {}
+                       uint16_t port, std::filesystem::path ui_dist, DependencyManager& deps)
+    : impl_{std::make_unique<Impl>(mgr, bridge, cfg, deps, port, std::move(ui_dist))} {}
 
 HttpServer::~HttpServer() = default;
 

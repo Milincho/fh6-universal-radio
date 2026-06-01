@@ -60,17 +60,13 @@ From there:
     (same binary as YouTube Music below).
 
   * YouTube Music: paste a video URL, a playlist, or a YT Music
-    link. This path needs three external tools. Open a Command
-    Prompt and run:
-
-        winget install yt-dlp.yt-dlp
-        winget install Gyan.FFmpeg
-        winget install DenoLand.Deno
-
-    Then restart the game. yt-dlp and ffmpeg can also be pointed
-    at explicitly from Settings > YouTube Music (yt-dlp)
-    and Settings > General > ffmpeg path in the dashboard
-    if you prefer a manual install.
+    link. This path relies on yt-dlp and ffmpeg. The mod fetches
+    both automatically on first launch into fh6-radio\bin, 
+    so there is nothing to install by hand. If you would
+    rather manage them yourself, set
+    Settings > YouTube Music (yt-dlp) and Settings > General >
+    ffmpeg path to your own binaries, or install them with
+    `winget install yt-dlp.yt-dlp` / `winget install Gyan.FFmpeg`.
 
     For age-gated or private content, export your browser's cookies
     as a Netscape cookies.txt (use an extension like "Get cookies.txt
@@ -79,7 +75,7 @@ From there:
   * Jellyfin: stream playlists from your own Jellyfin server.
     Configure the server URL, API key, user ID, and playlist ID
     under Settings > Jellyfin. Jellyfin transcodes to PCM via
-    ffmpeg, so the configured ffmpeg path must be valid.
+    ffmpeg.
 
   * External audio: capture any Windows playback device and pipe a
     live app (Deezer, a browser tab...) into the radio. The capture
@@ -89,6 +85,13 @@ From there:
     app directly instead of through the radio. Track info and
     next/previous come from the selected Windows media session, and the
     app pauses and resumes together with the game radio.
+
+  * Spotify Connect: enable Spotify under Settings, then pick
+    "FH6 Universal Radio" from the Devices list in your phone's or
+    desktop's Spotify app to stream to the game. This needs librespot,
+    which has no official Windows build so the mod downloads a copy it
+    builds itself into fh6-radio\bin on first launch. An old Spotify
+    Premium account is required by Spotify Connect.
 
 A handful of in-game extras live under Settings in the dashboard:
 
