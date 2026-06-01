@@ -38,7 +38,7 @@ std::string drain_to_eof(HANDLE pipe) {
 }
 
 bool is_playlist_url(std::string_view url) {
-    return url.find("playlist?") != std::string_view::npos;
+    return url.find("playlist?") != std::string_view::npos || url.find("list=") != std::string_view::npos;
 }
 
 std::string watch_url_for_id(std::string_view id) {
@@ -112,6 +112,11 @@ void YouTubeMusicSource::set_target(std::string url) {
 void YouTubeMusicSource::set_ffmpeg_path(std::filesystem::path p) {
     std::scoped_lock lk{mu_};
     ffmpeg_path_ = std::move(p);
+}
+
+void YouTubeMusicSource::set_yt_dlp_path(std::filesystem::path p) {
+    std::scoped_lock lk{mu_};
+    cfg_.yt_dlp_path = std::move(p);
 }
 
 void YouTubeMusicSource::set_shuffle(bool shuffle) {
@@ -290,7 +295,8 @@ YouTubeMusicSource::spawn_pipe_locked(std::string_view url, std::size_t for_idx)
                                       L"--encoding UTF-8 "
                                       L"--print \"%(title)s\" "
                                       L"--print \"%(uploader)s\" "
-                                      L"--print \"%(duration)s\" ";
+                                      L"--print \"%(duration)s\" "
+                                      L"--print \"%(thumbnail)s\" ";
     if (!cfg_.cookies_path.empty())
         tl_cmd += L"--cookies " + quote(cfg_.cookies_path.wstring()) + L" ";
     tl_cmd += L"-- " + quote(widen(play_url));
@@ -426,9 +432,7 @@ bool YouTubeMusicSource::skip_next() {
     std::scoped_lock lk{mu_};
     if (queue_.empty()) return false;
     consecutive_failed_ = 0;
-    const auto n = static_cast<std::ptrdiff_t>(queue_.size());
-    auto i       = static_cast<std::ptrdiff_t>(queue_idx_) + 1;
-    queue_idx_   = static_cast<std::size_t>(((i % n) + n) % n);
+    queue_idx_ = next_queue_idx_locked();
     if (!promote_prefetch_locked(queue_idx_)) start_pipe_locked();
     if (!pipe_) return false;
     state_.store(PlaybackState::playing, std::memory_order_release);
@@ -445,9 +449,7 @@ void YouTubeMusicSource::next() {
     std::scoped_lock lk{mu_};
     if (queue_.empty()) return;
     consecutive_failed_ = 0;   // user override clears the give-up state
-    const auto n = static_cast<std::ptrdiff_t>(queue_.size());
-    auto i       = static_cast<std::ptrdiff_t>(queue_idx_) + 1;
-    queue_idx_   = static_cast<std::size_t>(((i % n) + n) % n);
+    queue_idx_ = next_queue_idx_locked();
     if (!promote_prefetch_locked(queue_idx_)) start_pipe_locked();
     if (pipe_) state_.store(PlaybackState::playing, std::memory_order_release);
 }
@@ -535,12 +537,15 @@ void YouTubeMusicSource::drain_title_pipe_locked(Pipe* p) {
     auto title    = take_line();
     auto uploader = take_line();
     auto duration = take_line();
+    auto thumb    = take_line();
     if (!title.empty() && title != "NA") p->info.title = std::move(title);
     if (!uploader.empty() && uploader != "NA") p->info.artist = std::move(uploader);
     try {
         if (!duration.empty() && duration != "NA")
             p->info.duration_ms = static_cast<std::uint64_t>(std::stod(duration) * 1000.0);
     } catch (...) {}
+    // yt-dlp's %(thumbnail)s is a public i.ytimg.com URL the browser loads directly.
+    if (!thumb.empty() && thumb != "NA") p->info.artwork_url = std::move(thumb);
     CloseHandle(p->title_pipe);
     p->title_pipe = nullptr;
 }
@@ -563,9 +568,7 @@ void YouTubeMusicSource::pump(RingBuffer& ring) {
     // ---- PCM drain ----
     auto advance_to_next = [&] {
         if (queue_.empty()) { stop_pipe_locked(); return; }
-        const auto n = static_cast<std::ptrdiff_t>(queue_.size());
-        auto i       = static_cast<std::ptrdiff_t>(queue_idx_) + 1;
-        queue_idx_   = static_cast<std::size_t>(((i % n) + n) % n);
+        queue_idx_ = next_queue_idx_locked();
         if (!promote_prefetch_locked(queue_idx_)) start_pipe_locked();
         if (pipe_) state_.store(PlaybackState::playing, std::memory_order_release);
     };

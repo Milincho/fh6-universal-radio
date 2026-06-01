@@ -5,7 +5,6 @@
 #include "fh6/log.hpp"
 
 #include <chrono>
-#include <cstring>
 
 namespace fh6::fmod_bridge {
 
@@ -19,6 +18,13 @@ constexpr int kDiscoveryTries  = 120; // 10-minute budget; the radio system
 // Ticks of no read_callback progress (while the source is producing PCM)
 // before we conclude the game tore the radio channel down. 1s @ 20ms.
 constexpr int kStaleTickThreshold = 50;
+
+// Frozen-read ticks before we treat the station as genuinely silenced (pause
+// menu, radio off) and tell the active source to mirror it onto any live
+// player it wraps. Must clear the stall-retune rebuild window (~1s retune +
+// up to ~2s reacquire), so a rewind or race transition that briefly tears the
+// channel down and rebuilds it doesn't read as a pause. 3.5s @ 20ms.
+constexpr int kInaudibleTicks = 175;
 
 // Minimum gap between two off/on station toggles. The toggle blocks ~300ms
 // and the game needs a moment to reallocate the channel, so we leave it well
@@ -78,9 +84,13 @@ void ControlLoop::run(const std::stop_token& tok) {
         bridge_.retarget_if_needed();
         bridge_.manager().pump_once();
 
+        // Skip refreshing while the station is silenced (pause menu, rewind):
+        // the HUD isn't shown, and freezing the value lets the dedup in
+        // MetadataInjector swallow the resume so the game doesn't re-pop its
+        // now-playing banner on every pause/rewind.
         if (++meta_tick >= kMetaEveryNTicks) {
             meta_tick = 0;
-            push_metadata();
+            if (radio_audible_) push_metadata();
         }
 
         // Staleness watchdog: while a source is actively producing audio,
@@ -109,6 +119,39 @@ void ControlLoop::run(const std::stop_token& tok) {
             }
         } else {
             stale_ticks_ = 0;
+        }
+
+        // Audibility edge: while a source is producing, a frozen read_callback
+        // means the game silenced our station. Report the transition so a
+        // source wrapping a live player (External Audio) pauses/resumes it.
+        // Re-arm on every source change and only count once that source has
+        // actually been read, so stale loop state can't fire a phantom edge.
+        // The threshold sits above the stall-retune rebuild window, so the
+        // channel churn from a rewind or race transition (which the watchdog
+        // above heals) never trips it; only sustained silence does.
+        if (active && busy) {
+            if (active != audible_source_) {
+                audible_source_ = active;
+                idle_ticks_     = 0;
+                audible_primed_ = false;
+                radio_audible_  = true;
+            }
+            if (c != prev_calls_) {
+                idle_ticks_     = 0;
+                audible_primed_ = true;
+            } else if (audible_primed_) {
+                ++idle_ticks_;
+            }
+            const bool audible = idle_ticks_ < kInaudibleTicks;
+            if (audible != radio_audible_) {
+                radio_audible_ = audible;
+                active->on_radio_audible(audible);
+            }
+        } else {
+            idle_ticks_     = 0;
+            audible_primed_ = false;
+            radio_audible_  = true;
+            audible_source_ = nullptr;
         }
 
         run_playback_state_machines(std::chrono::steady_clock::now());
@@ -176,7 +219,7 @@ void ControlLoop::run_playback_state_machines(time_point now) noexcept {
     // loading screens; the 5 s race-restart window stays separate from the
     // 45 s race-start floor so a quick restart-then-engage still dispatches.
     constexpr auto kQuickSkipWindow     = 1000ms;
-    constexpr auto kSpircCooldown       = 1500ms;
+    constexpr auto kSkipCommandCooldown = 1500ms;
     constexpr auto kRaceStartDebounce   = 45s;
     constexpr auto kRaceRestartDebounce = 5s;
 
@@ -207,7 +250,7 @@ void ControlLoop::run_playback_state_machines(time_point now) noexcept {
     const bool race_event      = (race_edge_in || restart_edge_in) && r10;
     const auto race_debounce   = restart_edge_in ? kRaceRestartDebounce : kRaceStartDebounce;
     if (race_event && now - last_race_event_ >= race_debounce &&
-        now - last_skip_cmd_ >= kSpircCooldown) {
+        now - last_skip_cmd_ >= kSkipCommandCooldown) {
         const auto& mode    = opts->race_start_playback;
         const char* outcome = "keeping current position";
         bool fired          = false;
@@ -234,7 +277,7 @@ void ControlLoop::run_playback_state_machines(time_point now) noexcept {
         if (opts->quick_station_skip) quick_skip_armed_ = true;
     } else if (!prev_r10_ && r10) {
         if (quick_skip_armed_ && now - last_r10_off_ <= kQuickSkipWindow &&
-            now - last_skip_cmd_ >= kSpircCooldown) {
+            now - last_skip_cmd_ >= kSkipCommandCooldown) {
             if (active->skip_next()) {
                 ring.drain();
                 last_skip_cmd_ = now;

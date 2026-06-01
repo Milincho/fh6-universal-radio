@@ -1,11 +1,15 @@
 #include "fh6/http/http_server.hpp"
 #include "fh6/audio_source_manager.hpp"
 #include "fh6/config_store.hpp"
+#include "fh6/deps.hpp"
 #include "fh6/fmod/dsp_bridge.hpp"
 #include "fh6/log.hpp"
 #include "fh6/sources/local_file_source.hpp"
 #include "fh6/sources/youtube_music_source.hpp"
 #include "fh6/sources/jellyfin_source.hpp"
+#include "fh6/sources/external_audio_source.hpp"
+#include "fh6/sources/external_media_session.hpp"
+#include "fh6/sources/spotify_source.hpp"
 #include "fh6/sources/online_radio_source.hpp"
 
 #include <nlohmann/json.hpp>
@@ -136,6 +140,18 @@ json config_to_json(const Config& c) {
              {"use_favorites", c.jellyfin.use_favorites},
              {"shuffle", c.jellyfin.shuffle},
          }},
+        {"external_audio",
+         json{
+             {"enabled", c.external_audio.enabled},
+             {"endpoint_id", c.external_audio.endpoint_id},
+             {"media_session_id", c.external_audio.media_session_id},
+         }},
+         {"spotify",
+         json{
+             {"enabled", c.spotify.enabled},
+             {"librespot_path", path_s(c.spotify.librespot_path)},
+             {"cache_dir", path_s(c.spotify.cache_dir)},
+         }},
          {"online_radio",
          json{
              {"enabled", c.online_radio.enabled},
@@ -211,6 +227,18 @@ void apply_patch(Config& c, const json& j) {
         c.jellyfin.use_favorites    = pull(*it, "use_favorites", c.jellyfin.use_favorites);
         c.jellyfin.shuffle          = pull(*it, "shuffle", c.jellyfin.shuffle);
     }
+    if (auto it = j.find("external_audio"); it != j.end()) {
+        c.external_audio.enabled = pull(*it, "enabled", c.external_audio.enabled);
+        c.external_audio.endpoint_id =
+            pull(*it, "endpoint_id", c.external_audio.endpoint_id);
+        c.external_audio.media_session_id =
+            pull(*it, "media_session_id", c.external_audio.media_session_id);
+    }
+    if (auto it = j.find("spotify"); it != j.end()) {
+        c.spotify.enabled        = pull(*it, "enabled", c.spotify.enabled);
+        c.spotify.librespot_path = pull_path(*it, "librespot_path", c.spotify.librespot_path);
+        c.spotify.cache_dir      = pull_path(*it, "cache_dir", c.spotify.cache_dir);
+    }
     if (auto it = j.find("online_radio"); it != j.end()) {
         c.online_radio.enabled = pull(*it, "enabled", c.online_radio.enabled);
         c.online_radio.default_station_index = pull(*it, "default_station_index", c.online_radio.default_station_index);
@@ -281,6 +309,8 @@ constexpr std::string_view mime_for(std::string_view path) noexcept {
     if (ends(".svg"))  return "image/svg+xml";
     if (ends(".png"))  return "image/png";
     if (ends(".json")) return "application/json";
+    if (ends(".woff2")) return "font/woff2";
+    if (ends(".woff"))  return "font/woff";
     return "text/plain";
 }
 
@@ -369,14 +399,15 @@ struct HttpServer::Impl {
     AudioSourceManager& mgr;
     fmod_bridge::DSPBridge& bridge;
     ConfigStore& store;
+    DependencyManager& deps;
     std::filesystem::path ui_dist;
     std::atomic<bool> stopping{false};
     SOCKET srv_sock = INVALID_SOCKET;
     std::thread thr;
 
-    Impl(AudioSourceManager& m, fmod_bridge::DSPBridge& b, ConfigStore& s, uint16_t port,
-         std::filesystem::path dist)
-        : mgr{m}, bridge{b}, store{s}, ui_dist{std::move(dist)} {
+    Impl(AudioSourceManager& m, fmod_bridge::DSPBridge& b, ConfigStore& s, DependencyManager& d,
+         uint16_t port, std::filesystem::path dist)
+        : mgr{m}, bridge{b}, store{s}, deps{d}, ui_dist{std::move(dist)} {
         thr = std::thread{[this, port] { run(port); }};
     }
     ~Impl() {
@@ -385,10 +416,18 @@ struct HttpServer::Impl {
         if (thr.joinable()) thr.join();
     }
 
+    json build_sources() const {
+        auto* a        = mgr.active();
+        json available = json::array();
+        for (auto* s : mgr.sources_snapshot()) available.push_back(source_to_json(s));
+        return json{
+            {"active", a ? std::string{a->name()} : ""},
+            {"available", std::move(available)},
+        };
+    }
+
     json build_state() const {
-        auto* a      = mgr.active();
-        json sources = json::array();
-        for (auto* s : mgr.sources_snapshot()) sources.push_back(source_to_json(s));
+        auto* a = mgr.active();
         return json{
             {"game", json{{"attached", true}, {"injector_ready", true}}},
             {"audio",
@@ -403,21 +442,13 @@ struct HttpServer::Impl {
                  {"ring_avail", mgr.ring().readable()},
                  {"ring_capacity", mgr.ring().capacity()},
              }},
-            {"sources",
-             {
-                 {"active", a ? std::string{a->name()} : ""},
-                 {"available", std::move(sources)},
-             }},
+            {"sources", build_sources()},
             {"track", a ? track_to_json(a->current_track()) : json::object()},
             {"errors", json::array()},
         };
     }
 
-    IAudioSource* find(std::string_view name) const {
-        for (auto* s : mgr.sources_snapshot())
-            if (s->name() == name) return s;
-        return nullptr;
-    }
+    IAudioSource* find(std::string_view name) const { return mgr.find(name); }
     template <class T> T* find_typed(std::string_view name) const {
         return dynamic_cast<T*>(find(name));
     }
@@ -486,7 +517,7 @@ struct HttpServer::Impl {
         Request req;
         if (!read_request(client, req)) return;
 
-        auto ok = [&](const json& j = json::object()) {
+        auto ok = [&](json j = {}) {
             std::string body = j.empty()
                                    ? std::string{R"({"ok":true})"}
                                    : j.dump(-1, ' ', false, json::error_handler_t::replace);
@@ -509,8 +540,33 @@ struct HttpServer::Impl {
 
         if (m == "GET" && p == "/api/state")         return ok(build_state());
         if (m == "GET" && p == "/api/events")        return send_event_snapshot(client);
-        if (m == "GET" && p == "/api/sources")       return ok(build_state()["sources"]);
+        if (m == "GET" && p == "/api/sources")       return ok(build_sources());
+        if (m == "GET" && p.starts_with("/api/artwork")) {
+            // ?v=<token> only busts the browser cache; the active source
+            // always serves its current track's art.
+            if (auto* a = mgr.active())
+                if (auto img = a->artwork())
+                    return send_response(client, 200, img->bytes, img->mime);
+            return fail(404, "no artwork");
+        }
         if (m == "GET" && p == "/api/config")        return ok(config_to_json(store.snapshot()));
+        if (m == "GET" && p == "/api/deps") {
+            json tools = json::array();
+            for (const auto& d : deps.snapshot())
+                tools.push_back(json{
+                    {"name", d.name},
+                    {"present", d.managed_present},
+                    {"downloading", d.downloading},
+                    {"downloaded_bytes", d.downloaded_bytes},
+                    {"total_bytes", d.total_bytes},
+                    {"error", d.error},
+                });
+            return ok(json{{"tools", std::move(tools)}});
+        }
+        if (m == "POST" && p == "/api/deps/refresh") {
+            deps.retry();
+            return ok();
+        }
         if (m == "GET" && p == "/api/source/local_files/playlist") {
             auto* lf = find_typed<sources::LocalFileSource>("local_files");
             return lf ? ok(json{{"tracks", lf->playlist_snapshot()}})
@@ -530,6 +586,54 @@ struct HttpServer::Impl {
         if (m == "POST" && p == "/api/source/switch") {
             auto src = json::parse(req.body).at("source").get<std::string>();
             return mgr.switch_to(src) ? ok() : fail(404, "unknown source");
+        }
+        if (m == "GET" && p == "/api/external_audio/devices") {
+            json devices = json::array();
+            for (const auto& d : sources::enumerate_external_audio_devices()) {
+                devices.push_back(json{
+                    {"id", d.id},
+                    {"name", d.name},
+                    {"is_default", d.is_default},
+                });
+            }
+            auto snap = store.snapshot();
+            json sessions = json::array();
+            for (const auto& session : sources::enumerate_external_audio_media_sessions(
+                     snap.external_audio.media_session_id)) {
+                sessions.push_back(json{
+                    {"id", session.id},
+                    {"name", session.name},
+                    {"is_current", session.is_current},
+                    {"is_selected", session.is_selected},
+                });
+            }
+            return ok(json{
+                {"enabled", snap.external_audio.enabled},
+                {"endpoint_id", snap.external_audio.endpoint_id},
+                {"media_session_id", snap.external_audio.media_session_id},
+                {"media_sessions_available", sources::external_audio_media_sessions_available()},
+                {"media_sessions", sessions},
+                {"devices", devices},
+            });
+        }
+        if (m == "PUT" && p == "/api/external_audio/config") {
+            auto body = req.body.empty() ? json::object() : json::parse(req.body);
+            auto snap_before = store.snapshot();
+            const auto endpoint = body.value("endpoint_id", snap_before.external_audio.endpoint_id);
+            const auto media_session_id =
+                body.value("media_session_id", snap_before.external_audio.media_session_id);
+            const auto enabled = body.value("enabled", snap_before.external_audio.enabled);
+            // store.patch() notifies the bridge observer synchronously, which
+            // (un)registers the source and pushes the new config via set_config.
+            store.patch([&](Config& c) {
+                c.external_audio.enabled = enabled;
+                c.external_audio.endpoint_id = endpoint;
+                c.external_audio.media_session_id = media_session_id;
+            });
+            auto snap = store.snapshot();
+            return ok(json{{"enabled", snap.external_audio.enabled},
+                           {"endpoint_id", snap.external_audio.endpoint_id},
+                           {"media_session_id", snap.external_audio.media_session_id}});
         }
         if (m == "POST" && p == "/api/source/youtube_music/cast") {
             auto* yt = find_typed<sources::YouTubeMusicSource>("youtube_music");
@@ -650,8 +754,8 @@ struct HttpServer::Impl {
 };
 
 HttpServer::HttpServer(AudioSourceManager& mgr, fmod_bridge::DSPBridge& bridge, ConfigStore& cfg,
-                       uint16_t port, std::filesystem::path ui_dist)
-    : impl_{std::make_unique<Impl>(mgr, bridge, cfg, port, std::move(ui_dist))} {}
+                       uint16_t port, std::filesystem::path ui_dist, DependencyManager& deps)
+    : impl_{std::make_unique<Impl>(mgr, bridge, cfg, deps, port, std::move(ui_dist))} {}
 
 HttpServer::~HttpServer() = default;
 

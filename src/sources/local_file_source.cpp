@@ -51,6 +51,63 @@ struct ProbedMetadata {
     std::string title, artist, album;
 };
 
+// Cover format from magic bytes; "" for anything we wouldn't give an <img>.
+std::string sniff_image_mime(const std::string& d) noexcept {
+    auto u = [&](std::size_t i) { return static_cast<unsigned char>(d[i]); };
+    if (d.size() >= 3 && u(0) == 0xFF && u(1) == 0xD8 && u(2) == 0xFF) return "image/jpeg";
+    if (d.size() >= 8 && u(0) == 0x89 && d[1] == 'P' && d[2] == 'N' && d[3] == 'G') return "image/png";
+    if (d.size() >= 6 && (d.compare(0, 6, "GIF87a") == 0 || d.compare(0, 6, "GIF89a") == 0))
+        return "image/gif";
+    if (d.size() >= 12 && d.compare(0, 4, "RIFF") == 0 && d.compare(8, 4, "WEBP") == 0)
+        return "image/webp";
+    return {};
+}
+
+// Copy the embedded cover out via one ffmpeg pass; empty when there's none.
+ArtworkImage extract_cover(const std::wstring& ff_bin, const std::filesystem::path& file) {
+    HANDLE job = create_kill_on_close_job();
+    if (!job) return {};
+
+    SECURITY_ATTRIBUTES sa{sizeof(sa), nullptr, TRUE};
+    HANDLE rd = nullptr, wr = nullptr;
+    if (!CreatePipe(&rd, &wr, &sa, 1 << 20)) {
+        CloseHandle(job);
+        return {};
+    }
+    SetHandleInformation(rd, HANDLE_FLAG_INHERIT, 0);
+
+    HANDLE nul_in  = open_nul(GENERIC_READ);
+    HANDLE err_log = open_stderr_log();
+    const std::wstring cmd =
+        quote(ff_bin) + L" -hide_banner -nostdin -loglevel error -i " + quote(file.wstring()) +
+        L" -an -c:v copy -frames:v 1 -f image2pipe pipe:1";
+    HANDLE proc = spawn_in_job(job, cmd, nul_in, wr, err_log);
+
+    CloseHandle(wr);
+    if (nul_in)  CloseHandle(nul_in);
+    if (err_log) CloseHandle(err_log);
+    if (!proc) {
+        CloseHandle(rd);
+        CloseHandle(job);
+        return {};
+    }
+
+    std::string data;
+    char buf[1 << 16];
+    DWORD got = 0;
+    // Cap at 8 MiB; covers are small and an unbounded read could balloon.
+    while (data.size() < (8u << 20) && ReadFile(rd, buf, sizeof(buf), &got, nullptr) && got > 0)
+        data.append(buf, got);
+    CloseHandle(rd);
+    CloseHandle(proc);
+    CloseHandle(job);
+
+    ArtworkImage out;
+    out.mime = sniff_image_mime(data);
+    if (!out.mime.empty()) out.bytes = std::move(data);
+    return out;
+}
+
 bool ieq_str(std::string_view a, std::string_view b) noexcept {
     if (a.size() != b.size()) return false;
     for (std::size_t i = 0; i < a.size(); ++i)
@@ -138,6 +195,7 @@ ProbedMetadata probe_metadata(const std::wstring& ff_bin, const std::filesystem:
 struct LocalFileSource::Decoder {
     ma_decoder ma{};
     bool ma_open = false;
+    bool ma_eof = false;
 
     HANDLE ff_job              = nullptr;
     HANDLE ff_proc             = nullptr;
@@ -146,6 +204,7 @@ struct LocalFileSource::Decoder {
     bool ff_eof                = false;
 
     TrackInfo info{};
+    ArtworkImage art{};
     // Per-decoder so a prefetched track promotes with its own ReplayGain
     // multiplier instead of inheriting the current track's.
     float loudness_coef     = 1.0f;
@@ -223,12 +282,13 @@ LocalFileSource::open_decoder_locked(std::size_t index) {
     auto d         = std::make_unique<Decoder>();
     d->for_cursor  = resolved;
 
-    auto meta      = probe_metadata(ffmpeg_path_.empty() ? L"ffmpeg" : ffmpeg_path_.wstring(),
-                                     path);
+    const std::wstring ff = ffmpeg_path_.empty() ? L"ffmpeg" : ffmpeg_path_.wstring();
+    auto meta      = probe_metadata(ff, path);
     d->info.duration_ms = meta.duration_ms;
     d->info.title       = std::move(meta.title);
     d->info.artist      = std::move(meta.artist);
     d->info.album       = std::move(meta.album);
+    d->art              = extract_cover(ff, path);
 
     ma_decoder_config mc = ma_decoder_config_init(ma_format_s16, 2, kSampleRate);
     if (ma_decoder_init_file(path.string().c_str(), &mc, &d->ma) == MA_SUCCESS) {
@@ -353,6 +413,7 @@ bool LocalFileSource::restart_current() {
     if (!dec_ || !dec_->any_open()) return false;
     if (dec_->ma_open) {
         if (ma_decoder_seek_to_pcm_frame(&dec_->ma, 0) != MA_SUCCESS) return false;
+        dec_->ma_eof = false;
     } else {
         // ffmpeg pipe is forward-only: re-open the same track from t=0.
         if (!open_track(cursor_)) return false;
@@ -411,6 +472,19 @@ void LocalFileSource::pump(RingBuffer& ring) {
     };
 
     if (dec_->ma_open) {
+        // if end of the file, wait for the ring buffer to drain
+        if (dec_->ma_eof) {
+            ma_uint64 cursor = 0;
+            if (ma_decoder_get_cursor_in_pcm_frames(&dec_->ma, &cursor) == MA_SUCCESS) {
+                const uint64_t queued = ring.readable() / kFrameBytes;
+                const uint64_t played = cursor > queued ? cursor - queued : 0;
+                position_ms_.store((played * 1000ull) / kSampleRate, std::memory_order_release);
+            }
+
+            if (ring.readable() == 0) advance_at_eof();
+            return;
+        }
+
         constexpr std::size_t kChunkFrames = 4096;
         while (ring.writable() >= kChunkFrames * kFrameBytes) {
             int16_t scratch[kChunkFrames * 2];
@@ -418,12 +492,15 @@ void LocalFileSource::pump(RingBuffer& ring) {
             if (ma_decoder_read_pcm_frames(&dec_->ma, scratch, kChunkFrames, &read) != MA_SUCCESS)
                 read = 0;
             if (read == 0) {
-                advance_at_eof();
-                return;
+                dec_->ma_eof = true;
+                break;
             }
             apply_dsp(scratch, static_cast<std::size_t>(read));
             ring.write(scratch, read * kFrameBytes);
-            if (read < kChunkFrames) break;
+            if (read < kChunkFrames) {
+                dec_->ma_eof = true;
+                break;
+            }
         }
 
         // Audible head, not decoder head: subtract what's still queued in the ring.
@@ -485,9 +562,20 @@ void LocalFileSource::pump(RingBuffer& ring) {
 TrackInfo LocalFileSource::current_track() const {
     std::scoped_lock lk{mu_};
     TrackInfo info;
-    if (dec_) info = dec_->info;
+    if (dec_) {
+        info = dec_->info;
+        if (!dec_->art.bytes.empty() && dec_->for_cursor < playlist_.size())
+            info.artwork_url = "/api/artwork?v=" +
+                std::to_string(std::hash<std::string>{}(playlist_[dec_->for_cursor].string()));
+    }
     info.position_ms = position_ms_.load(std::memory_order_acquire);
     return info;
+}
+
+std::optional<ArtworkImage> LocalFileSource::artwork() const {
+    std::scoped_lock lk{mu_};
+    if (dec_ && !dec_->art.bytes.empty()) return dec_->art;
+    return std::nullopt;
 }
 
 void LocalFileSource::set_directory(std::filesystem::path dir, bool recursive) {

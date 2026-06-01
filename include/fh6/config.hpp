@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cstdint>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -69,12 +70,33 @@ struct AudioConfig {
     float output_gain = 1.0f;
 };
 
+struct ExternalAudioConfig {
+    bool enabled = false;
+
+    // Empty = current Windows default playback device. Otherwise a full WASAPI
+    // endpoint id, or a stable user-entered substring used by ExternalAudioSource.
+    std::string endpoint_id;
+
+    // Empty = current Windows media session. Otherwise a SourceAppUserModelId
+    // returned by GlobalSystemMediaTransportControls. Used for metadata and
+    // transport commands; audio capture still comes from endpoint_id.
+    std::string media_session_id;
+};
+
+struct SpotifyConfig {
+    bool enabled = false;
+    std::filesystem::path librespot_path; // empty = look up on PATH
+    std::filesystem::path cache_dir = "spotify_cache";
+};
+
 struct Config {
     GeneralConfig general;
     LocalFilesConfig local_files;
     YouTubeMusicConfig youtube_music;
     AudioConfig audio;
     JellyfinConfig jellyfin;
+    ExternalAudioConfig external_audio;
+    SpotifyConfig spotify;
     OnlineRadioConfig online_radio;
     PlaybackConfig playback;
 };

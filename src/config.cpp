@@ -78,6 +78,13 @@ Config load_config(const std::filesystem::path& path) {
     cfg.youtube_music.default_playlist = pick<std::string>(ym, "default_playlist", "");
     cfg.youtube_music.shuffle          = pick<bool>(ym, "shuffle", cfg.youtube_music.shuffle);
 
+    const auto& sp                     = section(root, "spotify");
+    cfg.spotify.enabled                = pick<bool>(sp, "enabled", cfg.spotify.enabled);
+    cfg.spotify.librespot_path         = pick_path(sp, "librespot_path");
+    if (sp.contains("cache_dir")) {
+        cfg.spotify.cache_dir          = pick_path(sp, "cache_dir");
+    }
+
     const auto& jf = section(root, "jellyfin");
     cfg.jellyfin.enabled = pick<bool>(jf, "enabled", cfg.jellyfin.enabled);
     cfg.jellyfin.server_url = pick<std::string>(jf, "server_url", cfg.jellyfin.server_url);
@@ -102,6 +109,29 @@ Config load_config(const std::filesystem::path& path) {
             }
         }
     } catch (...) {}
+
+    const auto& or_sec = section(root, "online_radio");
+    cfg.online_radio.enabled = pick<bool>(or_sec, "enabled", cfg.online_radio.enabled);
+    cfg.online_radio.default_station_index = pick<int>(or_sec, "default_station_index", cfg.online_radio.default_station_index);
+    try {
+        if (or_sec.contains("stations")) {
+            const auto& arr = toml::find<std::vector<toml::table>>(or_sec, "stations");
+            cfg.online_radio.stations.clear();
+            for (const auto& t : arr) {
+                RadioStation st;
+                if (t.count("name")) st.name = toml::get<std::string>(t.at("name"));
+                if (t.count("url"))  st.url  = toml::get<std::string>(t.at("url"));
+                cfg.online_radio.stations.push_back(st);
+            }
+        }
+    } catch (...) {}
+
+    const auto& ea = section(root, "external_audio");
+    cfg.external_audio.enabled = pick<bool>(ea, "enabled", cfg.external_audio.enabled);
+    cfg.external_audio.endpoint_id =
+        pick<std::string>(ea, "endpoint_id", cfg.external_audio.endpoint_id);
+    cfg.external_audio.media_session_id =
+        pick<std::string>(ea, "media_session_id", cfg.external_audio.media_session_id);
 
     const auto& au = section(root, "audio");
     cfg.audio.output_gain =
@@ -264,6 +294,16 @@ void save_config(const std::filesystem::path& path, const Config& cfg) {
     e.kv("default_playlist", cfg.jellyfin.default_playlist);
     e.kv("use_favorites", cfg.jellyfin.use_favorites);
     e.kv("shuffle", cfg.jellyfin.shuffle);
+
+    e.header("external_audio");
+    e.kv("enabled", cfg.external_audio.enabled);
+    e.kv("endpoint_id", cfg.external_audio.endpoint_id);
+    e.kv("media_session_id", cfg.external_audio.media_session_id);
+
+    e.header("spotify");
+    e.kv("enabled", cfg.spotify.enabled);
+    e.kv_path("librespot_path", cfg.spotify.librespot_path);
+    e.kv_path("cache_dir", cfg.spotify.cache_dir);
 
     e.header("online_radio");
     e.kv("enabled", cfg.online_radio.enabled);
