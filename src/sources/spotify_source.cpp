@@ -121,7 +121,7 @@ struct SpotifySource::Pipe {
     }
 };
 
-SpotifySource::SpotifySource(SpotifyConfig cfg) : cfg_{std::move(cfg)} {
+SpotifySource::SpotifySource(SpotifyConfig cfg, std::filesystem::path ffmpeg_path) : cfg_{std::move(cfg)}, ffmpeg_path_{std::move(ffmpeg_path)} {
     info_.title = "Ready to Cast";
     info_.artist = "Spotify Connect";
 }
@@ -196,7 +196,8 @@ void SpotifySource::start_pipe_locked() {
     pipe->log_file = open_stderr_log(); // keep the log file open in our Pipe struct
 
     const auto spot = cfg_.librespot_path.empty() ? L"librespot" : cfg_.librespot_path.wstring();
-    const auto ff   = cfg_.ffmpeg_path.empty() ? L"ffmpeg" : cfg_.ffmpeg_path.wstring();
+    const std::wstring ff = ffmpeg_path_.empty() ? std::wstring{L"ffmpeg"}
+                                                 : ffmpeg_path_.wstring();
     const auto cache = cfg_.cache_dir.wstring();
 
     std::wstring spot_cmd = quote(spot) + 

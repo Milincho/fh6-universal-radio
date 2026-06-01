@@ -49,7 +49,6 @@ media_session_id = ''
 [spotify]
 enabled            = false
 librespot_path     = ''                # blank = `librespot` on PATH
-ffmpeg_path        = ''                # blank = `ffmpeg` on PATH
 cache_dir          = 'spotify_cache'   # folder to save the Spotify Connect auth data
 
 

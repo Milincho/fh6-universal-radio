@@ -148,7 +148,6 @@ json config_to_json(const Config& c) {
          json{
              {"enabled", c.spotify.enabled},
              {"librespot_path", path_s(c.spotify.librespot_path)},
-             {"ffmpeg_path", path_s(c.spotify.ffmpeg_path)},
              {"cache_dir", path_s(c.spotify.cache_dir)},
          }},
         {"audio",
@@ -224,7 +223,6 @@ void apply_patch(Config& c, const json& j) {
     if (auto it = j.find("spotify"); it != j.end()) {
         c.spotify.enabled        = pull(*it, "enabled", c.spotify.enabled);
         c.spotify.librespot_path = pull_path(*it, "librespot_path", c.spotify.librespot_path);
-        c.spotify.ffmpeg_path    = pull_path(*it, "ffmpeg_path", c.spotify.ffmpeg_path);
         c.spotify.cache_dir      = pull_path(*it, "cache_dir", c.spotify.cache_dir);
     }
     if (auto it = j.find("audio"); it != j.end()) {

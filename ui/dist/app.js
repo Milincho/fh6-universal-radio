@@ -301,7 +301,6 @@ const SCHEMA = [
   ["spotify", "Spotify Connect", [
     ["enabled",        "Enabled",                    "checkbox"],
     ["librespot_path", "librespot.exe path",         "text"],
-    ["ffmpeg_path",    "ffmpeg.exe path (optional)", "text"],
     ["cache_dir",      "Cache directory",            "text"],
   ]],
   ["audio", "Audio", [

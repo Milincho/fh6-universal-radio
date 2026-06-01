@@ -15,7 +15,7 @@ namespace fh6::sources {
 
 class SpotifySource final : public IAudioSource {
 public:
-    explicit SpotifySource(SpotifyConfig cfg);
+    SpotifySource(SpotifyConfig cfg, std::filesystem::path ffmpeg_path);
     ~SpotifySource() override;
 
     std::string_view name() const noexcept override { return "spotify"; }
@@ -49,6 +49,7 @@ private:
     bool cache_exists() const;
 
     SpotifyConfig cfg_;
+    std::filesystem::path ffmpeg_path_;
     std::unique_ptr<Pipe> pipe_;
 
     mutable std::mutex mu_;

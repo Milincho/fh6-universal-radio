@@ -75,7 +75,6 @@ struct ExternalAudioConfig {
 struct SpotifyConfig {
     bool enabled = false;
     std::filesystem::path librespot_path; // empty = look up on PATH
-    std::filesystem::path ffmpeg_path;    // empty = look up on PATH
     std::filesystem::path cache_dir = "spotify_cache";
 };
 

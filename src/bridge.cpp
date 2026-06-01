@@ -136,7 +136,7 @@ void run_bridge(HMODULE self) noexcept {
             mgr.unregister_source("external_audio");
         }
         if (c.spotify.enabled && !mgr.find("spotify")) {
-            auto src = std::make_unique<sources::SpotifySource>(c.spotify);
+            auto src = std::make_unique<sources::SpotifySource>(c.spotify, c.general.ffmpeg_path);
             if (src->initialize()) mgr.register_source(std::move(src));
         } else if (!c.spotify.enabled && mgr.find("spotify")) {
             mgr.unregister_source("spotify");
