@@ -57,6 +57,7 @@ Config load_config(const std::filesystem::path& path) {
     cfg.general.default_source = pick<std::string>(g, "default_source", cfg.general.default_source);
     cfg.general.fallback_source =
         pick<std::string>(g, "fallback_source", cfg.general.fallback_source);
+    cfg.general.ffmpeg_path = pick_path(g, "ffmpeg_path");
 
     const auto& lf            = section(root, "local_files");
     cfg.local_files.enabled   = pick<bool>(lf, "enabled", cfg.local_files.enabled);
@@ -74,7 +75,6 @@ Config load_config(const std::filesystem::path& path) {
     cfg.youtube_music.enabled          = pick<bool>(ym, "enabled", cfg.youtube_music.enabled);
     cfg.youtube_music.cookies_path     = pick_path(ym, "cookies_path");
     cfg.youtube_music.yt_dlp_path      = pick_path(ym, "yt_dlp_path");
-    cfg.youtube_music.ffmpeg_path      = pick_path(ym, "ffmpeg_path");
     cfg.youtube_music.default_playlist = pick<std::string>(ym, "default_playlist", "");
     cfg.youtube_music.shuffle          = pick<bool>(ym, "shuffle", cfg.youtube_music.shuffle);
 
@@ -85,6 +85,22 @@ Config load_config(const std::filesystem::path& path) {
     if (sp.contains("cache_dir")) {
         cfg.spotify.cache_dir          = pick_path(sp, "cache_dir");
     }
+
+    const auto& jf = section(root, "jellyfin");
+    cfg.jellyfin.enabled = pick<bool>(jf, "enabled", cfg.jellyfin.enabled);
+    cfg.jellyfin.server_url = pick<std::string>(jf, "server_url", cfg.jellyfin.server_url);
+    cfg.jellyfin.api_key = pick<std::string>(jf, "api_key", cfg.jellyfin.api_key);
+    cfg.jellyfin.user_id = pick<std::string>(jf, "user_id", cfg.jellyfin.user_id);
+    cfg.jellyfin.default_playlist = pick<std::string>(jf, "default_playlist", cfg.jellyfin.default_playlist);
+    cfg.jellyfin.use_favorites = pick<bool>(jf, "use_favorites", cfg.jellyfin.use_favorites);
+    cfg.jellyfin.shuffle = pick<bool>(jf, "shuffle", cfg.jellyfin.shuffle);
+
+    const auto& ea = section(root, "external_audio");
+    cfg.external_audio.enabled = pick<bool>(ea, "enabled", cfg.external_audio.enabled);
+    cfg.external_audio.endpoint_id =
+        pick<std::string>(ea, "endpoint_id", cfg.external_audio.endpoint_id);
+    cfg.external_audio.media_session_id =
+        pick<std::string>(ea, "media_session_id", cfg.external_audio.media_session_id);
 
     const auto& au = section(root, "audio");
     cfg.audio.output_gain =
@@ -102,6 +118,10 @@ Config load_config(const std::filesystem::path& path) {
         pick<bool>(pb, "volume_normalization", cfg.playback.volume_normalization);
     cfg.playback.equalizer_enabled =
         pick<bool>(pb, "equalizer_enabled", cfg.playback.equalizer_enabled);
+    cfg.playback.force_stereo_audio =
+        pick<bool>(pb, "force_stereo_audio", cfg.playback.force_stereo_audio);
+    cfg.playback.prebuffer_next_track =
+        pick<bool>(pb, "prebuffer_next_track", cfg.playback.prebuffer_next_track);
     try {
         if (pb.contains("equalizer_bands")) {
             auto v = toml::find<std::vector<double>>(pb, "equalizer_bands");
@@ -211,6 +231,7 @@ void save_config(const std::filesystem::path& path, const Config& cfg) {
     e.kv("ring_buffer_mb", (int64_t)cfg.general.ring_buffer_mb);
     e.kv("default_source", cfg.general.default_source);
     e.kv("fallback_source", cfg.general.fallback_source);
+    e.kv_path("ffmpeg_path", cfg.general.ffmpeg_path);
 
     e.header("local_files");
     e.kv("enabled", cfg.local_files.enabled);
@@ -223,9 +244,22 @@ void save_config(const std::filesystem::path& path, const Config& cfg) {
     e.kv("enabled", cfg.youtube_music.enabled);
     e.kv_path("cookies_path", cfg.youtube_music.cookies_path);
     e.kv_path("yt_dlp_path", cfg.youtube_music.yt_dlp_path);
-    e.kv_path("ffmpeg_path", cfg.youtube_music.ffmpeg_path);
     e.kv("default_playlist", cfg.youtube_music.default_playlist);
     e.kv("shuffle", cfg.youtube_music.shuffle);
+
+    e.header("jellyfin");
+    e.kv("enabled", cfg.jellyfin.enabled);
+    e.kv("server_url", cfg.jellyfin.server_url);
+    e.kv("api_key", cfg.jellyfin.api_key);
+    e.kv("user_id", cfg.jellyfin.user_id);
+    e.kv("default_playlist", cfg.jellyfin.default_playlist);
+    e.kv("use_favorites", cfg.jellyfin.use_favorites);
+    e.kv("shuffle", cfg.jellyfin.shuffle);
+
+    e.header("external_audio");
+    e.kv("enabled", cfg.external_audio.enabled);
+    e.kv("endpoint_id", cfg.external_audio.endpoint_id);
+    e.kv("media_session_id", cfg.external_audio.media_session_id);
 
     e.header("spotify");
     e.kv("enabled", cfg.spotify.enabled);
@@ -242,6 +276,8 @@ void save_config(const std::filesystem::path& path, const Config& cfg) {
     e.kv("volume_normalization", cfg.playback.volume_normalization);
     e.kv("equalizer_enabled", cfg.playback.equalizer_enabled);
     e.kv_floats("equalizer_bands", std::span<const float>{cfg.playback.equalizer_bands});
+    e.kv("force_stereo_audio", cfg.playback.force_stereo_audio);
+    e.kv("prebuffer_next_track", cfg.playback.prebuffer_next_track);
 
     auto tmp  = path;
     tmp      += ".tmp";

@@ -11,12 +11,35 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
+# Target is always a Windows PE
+if(NOT WIN32)
+    message(FATAL_ERROR
+        "This project targets Windows. On Linux, configure with a MinGW-w64 "
+        "toolchain file, e.g. -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64-x86_64.cmake")
+endif()
+
+add_compile_definitions(_WIN32_WINNT=0x0A00 WIN32_LEAN_AND_MEAN NOMINMAX
+                        UNICODE _UNICODE)
+
 if(MSVC)
     add_compile_options(/W4 /permissive- /Zc:__cplusplus /utf-8 /MP /EHsc /wd4324)
     add_compile_options("$<$<CONFIG:Release>:/O2;/GL;/Gy;/Gw>")
     add_link_options("$<$<CONFIG:Release>:/LTCG;/OPT:REF;/OPT:ICF>")
-    add_compile_definitions(_WIN32_WINNT=0x0A00 WIN32_LEAN_AND_MEAN NOMINMAX
-                            _CRT_SECURE_NO_WARNINGS UNICODE _UNICODE)
+    add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
+else()
+    # llvm-mingw (Clang). Match the MSVC profile as closely as makes sense:
+    # high warnings, ThinLTO + dead-section stripping in Release, and a
+    # statically linked C++ runtime so the resulting DLL has no libc++ /
+    # libunwind / libwinpthread dependency at load time.
+    # -fms-extensions enables MSVC SEH keywords (__try / __except) that the
+    # codebase uses to guard memory probes around game-owned pointers.
+    add_compile_options(-fms-extensions)
+    add_compile_options(-Wall -Wextra -Wpedantic -Wno-unknown-pragmas
+                        -Wno-cast-function-type -Wno-language-extension-token
+                        -Wno-deprecated-literal-operator)
+    add_compile_options("$<$<CONFIG:Release>:-O3;-flto=thin;-ffunction-sections;-fdata-sections>")
+    add_link_options("$<$<CONFIG:Release>:-flto=thin;-Wl,--gc-sections;-s>")
+    add_link_options(-static)
 endif()
 
 add_library(version SHARED
@@ -39,8 +62,17 @@ add_library(version SHARED
     src/http/http_server.cpp
     src/sources/local_file_source.cpp
     src/sources/youtube_music_source.cpp
+    src/sources/jellyfin_source.cpp
+    src/sources/external_audio_source.cpp
+    src/sources/external_media_session.cpp
     src/sources/spotify_source.cpp
 )
+
+# MSVC carries the forwarders via pragmas in dll_main.cpp because its .def
+# parser rejects absolute paths in forwarder targets; MinGW takes the .def.
+if(NOT MSVC)
+    target_sources(version PRIVATE src/proxy/version.def)
+endif()
 
 target_include_directories(version PRIVATE
     include
@@ -49,7 +81,7 @@ target_include_directories(version PRIVATE
     third_party/miniaudio
 )
 
-target_link_libraries(version PRIVATE ws2_32 bcrypt psapi)
+target_link_libraries(version PRIVATE ws2_32 bcrypt psapi winhttp ole32 uuid ksuser runtimeobject)
 
 set_target_properties(version PROPERTIES
     OUTPUT_NAME version

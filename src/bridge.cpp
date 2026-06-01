@@ -10,7 +10,9 @@
 #include "fh6/fmod/pe_image.hpp"
 #include "fh6/http/http_server.hpp"
 #include "fh6/sources/local_file_source.hpp"
+#include "fh6/sources/external_audio_source.hpp"
 #include "fh6/sources/youtube_music_source.hpp"
+#include "fh6/sources/jellyfin_source.hpp"
 #include "fh6/sources/spotify_source.hpp"
 
 #include <windows.h>
@@ -108,16 +110,30 @@ void run_bridge(HMODULE self) noexcept {
     auto sync_sources = [&mgr](const Config& c) {
         if (c.local_files.enabled && !mgr.find("local_files")) {
             auto src = std::make_unique<sources::LocalFileSource>(c.local_files,
-                                                                  c.youtube_music.ffmpeg_path);
+                                                                  c.general.ffmpeg_path);
             if (src->initialize()) mgr.register_source(std::move(src));
         } else if (!c.local_files.enabled && mgr.find("local_files")) {
             mgr.unregister_source("local_files");
         }
         if (c.youtube_music.enabled && !mgr.find("youtube_music")) {
-            auto src = std::make_unique<sources::YouTubeMusicSource>(c.youtube_music);
+            auto src = std::make_unique<sources::YouTubeMusicSource>(c.youtube_music,
+                                                                     c.general.ffmpeg_path);
             if (src->initialize()) mgr.register_source(std::move(src));
         } else if (!c.youtube_music.enabled && mgr.find("youtube_music")) {
             mgr.unregister_source("youtube_music");
+        }
+        if (c.jellyfin.enabled && !mgr.find("jellyfin")) {
+            auto src = std::make_unique<sources::JellyfinSource>(c.jellyfin, c.general.ffmpeg_path);
+            if (src->initialize()) mgr.register_source(std::move(src));
+        } else if (!c.jellyfin.enabled && mgr.find("jellyfin")) {
+            mgr.unregister_source("jellyfin");
+        }
+
+        if (c.external_audio.enabled && !mgr.find("external_audio")) {
+            auto src = std::make_unique<sources::ExternalAudioSource>(c.external_audio);
+            if (src->initialize()) mgr.register_source(std::move(src));
+        } else if (!c.external_audio.enabled && mgr.find("external_audio")) {
+            mgr.unregister_source("external_audio");
         }
         if (c.spotify.enabled && !mgr.find("spotify")) {
             auto src = std::make_unique<sources::SpotifySource>(c.spotify);
@@ -135,6 +151,7 @@ void run_bridge(HMODULE self) noexcept {
 
     fmod_bridge::DSPBridge bridge{mgr, fns};
     bridge.set_gain(cfg.audio.output_gain);
+    bridge.set_force_stereo_audio(cfg.playback.force_stereo_audio);
 
     std::unique_ptr<fmod_bridge::ControlLoop> ctrl;
     if (fns.ready())
@@ -152,10 +169,11 @@ void run_bridge(HMODULE self) noexcept {
         // Push the gain to both: the control loop's ramper otherwise snaps
         // the bridge value back to its own cached target on the next tick.
         bridge.set_gain(c.audio.output_gain);
+        bridge.set_force_stereo_audio(c.playback.force_stereo_audio);
         if (ctrl_ptr) ctrl_ptr->set_configured_gain(c.audio.output_gain);
         if (auto* local = dynamic_cast<sources::LocalFileSource*>(mgr.find("local_files"))) {
             local->set_shuffle(c.local_files.shuffle);
-            local->set_ffmpeg_path(c.youtube_music.ffmpeg_path);
+            local->set_ffmpeg_path(c.general.ffmpeg_path);
             local->set_directory(c.local_files.music_dir, c.local_files.recursive);
             if (mgr.active() == local && local->track_count() > 0 &&
                 local->playback_state() != PlaybackState::playing) {
@@ -164,6 +182,14 @@ void run_bridge(HMODULE self) noexcept {
         }
         if (auto* yt = dynamic_cast<sources::YouTubeMusicSource*>(mgr.find("youtube_music"))) {
             yt->set_shuffle(c.youtube_music.shuffle);
+            yt->set_ffmpeg_path(c.general.ffmpeg_path);
+        }
+        if (auto* jf = dynamic_cast<sources::JellyfinSource*>(mgr.find("jellyfin"))) {
+            jf->set_ffmpeg_path(c.general.ffmpeg_path);
+            jf->set_config(c.jellyfin);
+        }
+        if (auto* ext = dynamic_cast<sources::ExternalAudioSource*>(mgr.find("external_audio"))) {
+            ext->set_config(c.external_audio);
         }
 
         for (auto* s : mgr.sources_snapshot()) s->set_playback_options(c.playback);

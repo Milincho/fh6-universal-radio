@@ -1,11 +1,14 @@
 // version.dll proxy: forwards every export to the real system DLL via PE
 // forwarders, and spawns the bridge on DLL_PROCESS_ATTACH so the loader is
 // never blocked on FMOD discovery or HTTP startup.
+//
+// MSVC's .def parser rejects absolute paths in forwarder targets (the `:` /
+// `\` break parsing), so the pragmas below carry the forwarders for MSVC and
+// version.def carries them for MinGW (added conditionally in CMakeLists.txt).
 
 #include <windows.h>
 
-// Forwarding to "version.dll" without a path resolves back to us; the
-// absolute system32 path is what breaks the basename collision.
+#ifdef _MSC_VER
 #define FWD(name) \
     __pragma(comment(linker, "/EXPORT:" #name "=C:\\Windows\\System32\\version." #name))
 
@@ -28,6 +31,7 @@ FWD(VerQueryValueA)
 FWD(VerQueryValueW)
 
 #undef FWD
+#endif
 
 namespace fh6 {
 void run_bridge(HMODULE self) noexcept;

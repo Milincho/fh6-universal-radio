@@ -5,11 +5,13 @@
 #include "fh6/log.hpp"
 #include "fh6/sources/local_file_source.hpp"
 #include "fh6/sources/youtube_music_source.hpp"
+#include "fh6/sources/jellyfin_source.hpp"
+#include "fh6/sources/external_audio_source.hpp"
+#include "fh6/sources/external_media_session.hpp"
 #include "fh6/sources/spotify_source.hpp"
 
 #include <nlohmann/json.hpp>
 
-#define WIN32_LEAN_AND_MEAN
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
@@ -108,6 +110,7 @@ json config_to_json(const Config& c) {
              {"ring_buffer_mb", c.general.ring_buffer_mb},
              {"default_source", c.general.default_source},
              {"fallback_source", c.general.fallback_source},
+             {"ffmpeg_path", path_s(c.general.ffmpeg_path)},
          }},
         {"local_files",
          json{
@@ -122,9 +125,24 @@ json config_to_json(const Config& c) {
              {"enabled", c.youtube_music.enabled},
              {"cookies_path", path_s(c.youtube_music.cookies_path)},
              {"yt_dlp_path", path_s(c.youtube_music.yt_dlp_path)},
-             {"ffmpeg_path", path_s(c.youtube_music.ffmpeg_path)},
              {"default_playlist", c.youtube_music.default_playlist},
              {"shuffle", c.youtube_music.shuffle},
+         }},
+        {"jellyfin",
+         json{
+             {"enabled", c.jellyfin.enabled},
+             {"server_url", c.jellyfin.server_url},
+             {"api_key", c.jellyfin.api_key},
+             {"user_id", c.jellyfin.user_id},
+             {"default_playlist", c.jellyfin.default_playlist},
+             {"use_favorites", c.jellyfin.use_favorites},
+             {"shuffle", c.jellyfin.shuffle},
+         }},
+        {"external_audio",
+         json{
+             {"enabled", c.external_audio.enabled},
+             {"endpoint_id", c.external_audio.endpoint_id},
+             {"media_session_id", c.external_audio.media_session_id},
          }},
          {"spotify",
          json{
@@ -144,6 +162,8 @@ json config_to_json(const Config& c) {
              {"volume_normalization", c.playback.volume_normalization},
              {"equalizer_enabled", c.playback.equalizer_enabled},
              {"equalizer_bands", c.playback.equalizer_bands},
+             {"force_stereo_audio", c.playback.force_stereo_audio},
+             {"prebuffer_next_track", c.playback.prebuffer_next_track},
          }},
     };
 }
@@ -167,6 +187,7 @@ void apply_patch(Config& c, const json& j) {
         c.general.ring_buffer_mb  = pull(*it, "ring_buffer_mb", c.general.ring_buffer_mb);
         c.general.default_source  = pull(*it, "default_source", c.general.default_source);
         c.general.fallback_source = pull(*it, "fallback_source", c.general.fallback_source);
+        c.general.ffmpeg_path     = pull_path(*it, "ffmpeg_path", c.general.ffmpeg_path);
     }
     if (auto it = j.find("local_files"); it != j.end()) {
         c.local_files.enabled   = pull(*it, "enabled", c.local_files.enabled);
@@ -180,10 +201,25 @@ void apply_patch(Config& c, const json& j) {
         c.youtube_music.enabled      = pull(*it, "enabled", c.youtube_music.enabled);
         c.youtube_music.cookies_path = pull_path(*it, "cookies_path", c.youtube_music.cookies_path);
         c.youtube_music.yt_dlp_path  = pull_path(*it, "yt_dlp_path", c.youtube_music.yt_dlp_path);
-        c.youtube_music.ffmpeg_path  = pull_path(*it, "ffmpeg_path", c.youtube_music.ffmpeg_path);
         c.youtube_music.default_playlist =
             pull(*it, "default_playlist", c.youtube_music.default_playlist);
         c.youtube_music.shuffle = pull(*it, "shuffle", c.youtube_music.shuffle);
+    }
+    if (auto it = j.find("jellyfin"); it != j.end()) {
+        c.jellyfin.enabled          = pull(*it, "enabled", c.jellyfin.enabled);
+        c.jellyfin.server_url       = pull(*it, "server_url", c.jellyfin.server_url);
+        c.jellyfin.api_key          = pull(*it, "api_key", c.jellyfin.api_key);
+        c.jellyfin.user_id          = pull(*it, "user_id", c.jellyfin.user_id);
+        c.jellyfin.default_playlist = pull(*it, "default_playlist", c.jellyfin.default_playlist);
+        c.jellyfin.use_favorites    = pull(*it, "use_favorites", c.jellyfin.use_favorites);
+        c.jellyfin.shuffle          = pull(*it, "shuffle", c.jellyfin.shuffle);
+    }
+    if (auto it = j.find("external_audio"); it != j.end()) {
+        c.external_audio.enabled = pull(*it, "enabled", c.external_audio.enabled);
+        c.external_audio.endpoint_id =
+            pull(*it, "endpoint_id", c.external_audio.endpoint_id);
+        c.external_audio.media_session_id =
+            pull(*it, "media_session_id", c.external_audio.media_session_id);
     }
     if (auto it = j.find("spotify"); it != j.end()) {
         c.spotify.enabled        = pull(*it, "enabled", c.spotify.enabled);
@@ -202,6 +238,10 @@ void apply_patch(Config& c, const json& j) {
             pull(*it, "quick_station_skip", c.playback.quick_station_skip);
         c.playback.volume_normalization =
             pull(*it, "volume_normalization", c.playback.volume_normalization);
+        c.playback.force_stereo_audio =
+            pull(*it, "force_stereo_audio", c.playback.force_stereo_audio);
+        c.playback.prebuffer_next_track =
+            pull(*it, "prebuffer_next_track", c.playback.prebuffer_next_track);
         c.playback.equalizer_enabled =
             pull(*it, "equalizer_enabled", c.playback.equalizer_enabled);
         if (auto bands = it->find("equalizer_bands");
@@ -228,6 +268,7 @@ constexpr std::string_view status_text(int code) noexcept {
         case 200: return "OK";
         case 400: return "Bad Request";
         case 404: return "Not Found";
+        case 502: return "Bad Gateway";
         default:  return "Internal Server Error";
     }
 }
@@ -347,10 +388,18 @@ struct HttpServer::Impl {
         if (thr.joinable()) thr.join();
     }
 
+    json build_sources() const {
+        auto* a        = mgr.active();
+        json available = json::array();
+        for (auto* s : mgr.sources_snapshot()) available.push_back(source_to_json(s));
+        return json{
+            {"active", a ? std::string{a->name()} : ""},
+            {"available", std::move(available)},
+        };
+    }
+
     json build_state() const {
-        auto* a      = mgr.active();
-        json sources = json::array();
-        for (auto* s : mgr.sources_snapshot()) sources.push_back(source_to_json(s));
+        auto* a = mgr.active();
         return json{
             {"game", json{{"attached", true}, {"injector_ready", true}}},
             {"audio",
@@ -365,21 +414,13 @@ struct HttpServer::Impl {
                  {"ring_avail", mgr.ring().readable()},
                  {"ring_capacity", mgr.ring().capacity()},
              }},
-            {"sources",
-             {
-                 {"active", a ? std::string{a->name()} : ""},
-                 {"available", std::move(sources)},
-             }},
+            {"sources", build_sources()},
             {"track", a ? track_to_json(a->current_track()) : json::object()},
             {"errors", json::array()},
         };
     }
 
-    IAudioSource* find(std::string_view name) const {
-        for (auto* s : mgr.sources_snapshot())
-            if (s->name() == name) return s;
-        return nullptr;
-    }
+    IAudioSource* find(std::string_view name) const { return mgr.find(name); }
     template <class T> T* find_typed(std::string_view name) const {
         return dynamic_cast<T*>(find(name));
     }
@@ -448,7 +489,7 @@ struct HttpServer::Impl {
         Request req;
         if (!read_request(client, req)) return;
 
-        auto ok = [&](const json& j = json::object()) {
+        auto ok = [&](json j = {}) {
             std::string body = j.empty()
                                    ? std::string{R"({"ok":true})"}
                                    : j.dump(-1, ' ', false, json::error_handler_t::replace);
@@ -471,7 +512,7 @@ struct HttpServer::Impl {
 
         if (m == "GET" && p == "/api/state")         return ok(build_state());
         if (m == "GET" && p == "/api/events")        return send_event_snapshot(client);
-        if (m == "GET" && p == "/api/sources")       return ok(build_state()["sources"]);
+        if (m == "GET" && p == "/api/sources")       return ok(build_sources());
         if (m == "GET" && p == "/api/config")        return ok(config_to_json(store.snapshot()));
         if (m == "GET" && p == "/api/source/local_files/playlist") {
             auto* lf = find_typed<sources::LocalFileSource>("local_files");
@@ -493,6 +534,54 @@ struct HttpServer::Impl {
             auto src = json::parse(req.body).at("source").get<std::string>();
             return mgr.switch_to(src) ? ok() : fail(404, "unknown source");
         }
+        if (m == "GET" && p == "/api/external_audio/devices") {
+            json devices = json::array();
+            for (const auto& d : sources::enumerate_external_audio_devices()) {
+                devices.push_back(json{
+                    {"id", d.id},
+                    {"name", d.name},
+                    {"is_default", d.is_default},
+                });
+            }
+            auto snap = store.snapshot();
+            json sessions = json::array();
+            for (const auto& session : sources::enumerate_external_audio_media_sessions(
+                     snap.external_audio.media_session_id)) {
+                sessions.push_back(json{
+                    {"id", session.id},
+                    {"name", session.name},
+                    {"is_current", session.is_current},
+                    {"is_selected", session.is_selected},
+                });
+            }
+            return ok(json{
+                {"enabled", snap.external_audio.enabled},
+                {"endpoint_id", snap.external_audio.endpoint_id},
+                {"media_session_id", snap.external_audio.media_session_id},
+                {"media_sessions_available", sources::external_audio_media_sessions_available()},
+                {"media_sessions", sessions},
+                {"devices", devices},
+            });
+        }
+        if (m == "PUT" && p == "/api/external_audio/config") {
+            auto body = req.body.empty() ? json::object() : json::parse(req.body);
+            auto snap_before = store.snapshot();
+            const auto endpoint = body.value("endpoint_id", snap_before.external_audio.endpoint_id);
+            const auto media_session_id =
+                body.value("media_session_id", snap_before.external_audio.media_session_id);
+            const auto enabled = body.value("enabled", snap_before.external_audio.enabled);
+            // store.patch() notifies the bridge observer synchronously, which
+            // (un)registers the source and pushes the new config via set_config.
+            store.patch([&](Config& c) {
+                c.external_audio.enabled = enabled;
+                c.external_audio.endpoint_id = endpoint;
+                c.external_audio.media_session_id = media_session_id;
+            });
+            auto snap = store.snapshot();
+            return ok(json{{"enabled", snap.external_audio.enabled},
+                           {"endpoint_id", snap.external_audio.endpoint_id},
+                           {"media_session_id", snap.external_audio.media_session_id}});
+        }
         if (m == "POST" && p == "/api/source/youtube_music/cast") {
             auto* yt = find_typed<sources::YouTubeMusicSource>("youtube_music");
             if (!yt) return fail(404, "youtube_music not registered");
@@ -511,6 +600,17 @@ struct HttpServer::Impl {
             auto shuffle = json::parse(req.body).at("shuffle").get<bool>();
             yt->set_shuffle(shuffle);
             store.patch([shuffle](Config& c) { c.youtube_music.shuffle = shuffle; });
+            return ok();
+        }
+        if (m == "POST" && p == "/api/source/jellyfin/cast") {
+            auto* jf = find_typed<sources::JellyfinSource>("jellyfin");
+            if (!jf) return fail(404, "jellyfin not registered");
+            auto playlist_id = json::parse(req.body).value("playlist_id", std::string{});
+            if (playlist_id.empty()) return fail(400, "playlist_id required");
+            const bool was_active = (mgr.active() == jf);
+            if (!jf->cast(std::move(playlist_id))) return fail(502, "jellyfin fetch failed");
+            if (was_active) mgr.ring().drain();
+            mgr.switch_to("jellyfin");
             return ok();
         }
         if (m == "POST" && p == "/api/source/local_files/rescan") {
