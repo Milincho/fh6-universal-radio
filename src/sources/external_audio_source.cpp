@@ -499,6 +499,9 @@ std::string ExternalAudioSource::configured_media_session() const {
  return media_session_id_;
 }
 
+ExternalAudioSource::ExternalAudioSource(ExternalAudioConfig cfg)
+    : endpoint_id_(std::move(cfg.endpoint_id)), media_session_id_(std::move(cfg.media_session_id)) {}
+
 ExternalAudioSource::~ExternalAudioSource() {
  shutdown();
 }

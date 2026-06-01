@@ -23,8 +23,8 @@ std::vector<ExternalAudioDevice> enumerate_external_audio_devices();
 
 class ExternalAudioSource final : public IAudioSource {
 public:
- ExternalAudioSource() = default;
- ~ExternalAudioSource() override;
+  ExternalAudioSource(ExternalAudioConfig cfg);
+  ~ExternalAudioSource() override;
 
  std::string_view name() const noexcept override { return "external_audio"; }
  std::string_view display_name() const noexcept override { return "External Audio"; }
