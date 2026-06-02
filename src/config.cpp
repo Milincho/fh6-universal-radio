@@ -59,8 +59,8 @@ Config load_config(const std::filesystem::path& path) {
         pick<std::string>(g, "fallback_source", cfg.general.fallback_source);
     cfg.general.ffmpeg_path = pick_path(g, "ffmpeg_path");
 
-    const auto& lf          = section(root, "local_files");
-    cfg.local_files.enabled = pick<bool>(lf, "enabled", cfg.local_files.enabled);
+    const auto& lf                 = section(root, "local_files");
+    cfg.local_files.enabled        = pick<bool>(lf, "enabled", cfg.local_files.enabled);
     cfg.local_files.active_station = pick<std::string>(lf, "active_station", "");
     try {
         if (lf.contains("supported_formats")) {
@@ -72,9 +72,10 @@ Config load_config(const std::filesystem::path& path) {
     auto read_paths = [](const toml::value& tbl, const char* key) {
         std::vector<std::filesystem::path> out;
         try {
-            if (tbl.contains(key))
+            if (tbl.contains(key)) {
                 for (auto& s : toml::find<std::vector<std::string>>(tbl, key))
                     if (!s.empty()) out.emplace_back(s);
+            }
         } catch (...) {}
         return out;
     };
@@ -89,7 +90,8 @@ Config load_config(const std::filesystem::path& path) {
                 s.order     = pick<std::string>(st, "order", s.order);
                 s.grouping  = pick<std::string>(st, "grouping", s.grouping);
                 s.repeat    = pick<std::string>(st, "repeat", s.repeat);
-                if (s.name.empty()) s.name = "Station " + std::to_string(cfg.local_files.stations.size() + 1);
+                if (s.name.empty())
+                    s.name = "Station " + std::to_string(cfg.local_files.stations.size() + 1);
                 cfg.local_files.stations.push_back(std::move(s));
             }
         }
@@ -116,23 +118,24 @@ Config load_config(const std::filesystem::path& path) {
     cfg.youtube_music.default_playlist = pick<std::string>(ym, "default_playlist", "");
     cfg.youtube_music.shuffle          = pick<bool>(ym, "shuffle", cfg.youtube_music.shuffle);
 
-    const auto& sp                     = section(root, "spotify");
-    cfg.spotify.enabled                = pick<bool>(sp, "enabled", cfg.spotify.enabled);
-    cfg.spotify.librespot_path         = pick_path(sp, "librespot_path");
+    const auto& sp             = section(root, "spotify");
+    cfg.spotify.enabled        = pick<bool>(sp, "enabled", cfg.spotify.enabled);
+    cfg.spotify.librespot_path = pick_path(sp, "librespot_path");
     if (sp.contains("cache_dir")) {
-        cfg.spotify.cache_dir          = pick_path(sp, "cache_dir");
+        cfg.spotify.cache_dir = pick_path(sp, "cache_dir");
     }
 
-    const auto& jf = section(root, "jellyfin");
-    cfg.jellyfin.enabled = pick<bool>(jf, "enabled", cfg.jellyfin.enabled);
+    const auto& jf          = section(root, "jellyfin");
+    cfg.jellyfin.enabled    = pick<bool>(jf, "enabled", cfg.jellyfin.enabled);
     cfg.jellyfin.server_url = pick<std::string>(jf, "server_url", cfg.jellyfin.server_url);
-    cfg.jellyfin.api_key = pick<std::string>(jf, "api_key", cfg.jellyfin.api_key);
-    cfg.jellyfin.user_id = pick<std::string>(jf, "user_id", cfg.jellyfin.user_id);
-    cfg.jellyfin.default_playlist = pick<std::string>(jf, "default_playlist", cfg.jellyfin.default_playlist);
+    cfg.jellyfin.api_key    = pick<std::string>(jf, "api_key", cfg.jellyfin.api_key);
+    cfg.jellyfin.user_id    = pick<std::string>(jf, "user_id", cfg.jellyfin.user_id);
+    cfg.jellyfin.default_playlist =
+        pick<std::string>(jf, "default_playlist", cfg.jellyfin.default_playlist);
     cfg.jellyfin.use_favorites = pick<bool>(jf, "use_favorites", cfg.jellyfin.use_favorites);
-    cfg.jellyfin.shuffle = pick<bool>(jf, "shuffle", cfg.jellyfin.shuffle);
+    cfg.jellyfin.shuffle       = pick<bool>(jf, "shuffle", cfg.jellyfin.shuffle);
 
-    const auto& ea = section(root, "external_audio");
+    const auto& ea             = section(root, "external_audio");
     cfg.external_audio.enabled = pick<bool>(ea, "enabled", cfg.external_audio.enabled);
     cfg.external_audio.endpoint_id =
         pick<std::string>(ea, "endpoint_id", cfg.external_audio.endpoint_id);
@@ -162,11 +165,10 @@ Config load_config(const std::filesystem::path& path) {
     try {
         if (pb.contains("equalizer_bands")) {
             auto v = toml::find<std::vector<double>>(pb, "equalizer_bands");
-            for (std::size_t i = 0; i < cfg.playback.equalizer_bands.size() && i < v.size();
-                 ++i) {
-                float b = static_cast<float>(v[i]);
+            for (std::size_t i = 0; i < cfg.playback.equalizer_bands.size() && i < v.size(); ++i) {
+                auto b = static_cast<float>(v[i]);
                 if (b < -6.f) b = -6.f;
-                if (b > 6.f)  b =  6.f;
+                if (b > 6.f) b = 6.f;
                 cfg.playback.equalizer_bands[i] = b;
             }
         }

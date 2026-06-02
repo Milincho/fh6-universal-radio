@@ -35,28 +35,28 @@ namespace {
 
 constexpr const char* state_string(PlaybackState s) noexcept {
     switch (s) {
-        case PlaybackState::stopped:   return "stopped";
-        case PlaybackState::playing:   return "playing";
-        case PlaybackState::paused:    return "paused";
+        case PlaybackState::stopped: return "stopped";
+        case PlaybackState::playing: return "playing";
+        case PlaybackState::paused: return "paused";
         case PlaybackState::buffering: return "buffering";
     }
     return "unknown";
 }
 constexpr const char* auth_string(AuthState s) noexcept {
     switch (s) {
-        case AuthState::none_required:  return "none_required";
-        case AuthState::authenticated:  return "authenticated";
-        case AuthState::needs_auth:     return "needs_auth";
-        case AuthState::error:          return "error";
+        case AuthState::none_required: return "none_required";
+        case AuthState::authenticated: return "authenticated";
+        case AuthState::needs_auth: return "needs_auth";
+        case AuthState::error: return "error";
     }
     return "unknown";
 }
 constexpr const char* mode_string(fmod_bridge::DSPMode m) noexcept {
     switch (m) {
-        case fmod_bridge::DSPMode::off:         return "off";
+        case fmod_bridge::DSPMode::off: return "off";
         case fmod_bridge::DSPMode::passthrough: return "passthrough";
-        case fmod_bridge::DSPMode::silence:     return "silence";
-        case fmod_bridge::DSPMode::pcm:         return "pcm";
+        case fmod_bridge::DSPMode::silence: return "silence";
+        case fmod_bridge::DSPMode::pcm: return "pcm";
     }
     return "unknown";
 }
@@ -175,7 +175,7 @@ json config_to_json(const Config& c) {
              {"endpoint_id", c.external_audio.endpoint_id},
              {"media_session_id", c.external_audio.media_session_id},
          }},
-         {"spotify",
+        {"spotify",
          json{
              {"enabled", c.spotify.enabled},
              {"librespot_path", path_s(c.spotify.librespot_path)},
@@ -200,7 +200,9 @@ json config_to_json(const Config& c) {
 
 template <class T> T pull(const json& tbl, const char* k, T fallback) {
     if (auto it = tbl.find(k); it != tbl.end() && !it->is_null()) {
-        try { return it->get<T>(); } catch (...) {}
+        try {
+            return it->get<T>();
+        } catch (...) {}
     }
     return fallback;
 }
@@ -212,12 +214,14 @@ std::filesystem::path pull_path(const json& tbl, const char* k,
 
 std::vector<std::filesystem::path> paths_from_json(const json& a) {
     std::vector<std::filesystem::path> out;
-    if (a.is_array())
-        for (const auto& e : a)
+    if (a.is_array()) {
+        for (const auto& e : a) {
             if (e.is_string()) {
                 auto s = e.get<std::string>();
                 if (!s.empty()) out.emplace_back(s);
             }
+        }
+    }
     return out;
 }
 
@@ -228,7 +232,7 @@ LocalStation station_from_json(const json& j) {
     s.order     = pull<std::string>(j, "order", s.order);
     s.grouping  = pull<std::string>(j, "grouping", s.grouping);
     s.repeat    = pull<std::string>(j, "repeat", s.repeat);
-    if (auto it = j.find("roots"); it != j.end())    s.roots    = paths_from_json(*it);
+    if (auto it = j.find("roots"); it != j.end()) s.roots = paths_from_json(*it);
     if (auto it = j.find("excluded"); it != j.end()) s.excluded = paths_from_json(*it);
     return s;
 }
@@ -243,9 +247,8 @@ void apply_patch(Config& c, const json& j) {
         c.general.ffmpeg_path     = pull_path(*it, "ffmpeg_path", c.general.ffmpeg_path);
     }
     if (auto it = j.find("local_files"); it != j.end()) {
-        c.local_files.enabled = pull(*it, "enabled", c.local_files.enabled);
-        c.local_files.active_station =
-            pull(*it, "active_station", c.local_files.active_station);
+        c.local_files.enabled        = pull(*it, "enabled", c.local_files.enabled);
+        c.local_files.active_station = pull(*it, "active_station", c.local_files.active_station);
         if (auto sts = it->find("stations"); sts != it->end() && sts->is_array()) {
             std::vector<LocalStation> parsed;
             for (const auto& st : *sts) parsed.push_back(station_from_json(st));
@@ -272,9 +275,8 @@ void apply_patch(Config& c, const json& j) {
         c.jellyfin.shuffle          = pull(*it, "shuffle", c.jellyfin.shuffle);
     }
     if (auto it = j.find("external_audio"); it != j.end()) {
-        c.external_audio.enabled = pull(*it, "enabled", c.external_audio.enabled);
-        c.external_audio.endpoint_id =
-            pull(*it, "endpoint_id", c.external_audio.endpoint_id);
+        c.external_audio.enabled     = pull(*it, "enabled", c.external_audio.enabled);
+        c.external_audio.endpoint_id = pull(*it, "endpoint_id", c.external_audio.endpoint_id);
         c.external_audio.media_session_id =
             pull(*it, "media_session_id", c.external_audio.media_session_id);
     }
@@ -298,15 +300,13 @@ void apply_patch(Config& c, const json& j) {
             pull(*it, "force_stereo_audio", c.playback.force_stereo_audio);
         c.playback.prebuffer_next_track =
             pull(*it, "prebuffer_next_track", c.playback.prebuffer_next_track);
-        c.playback.equalizer_enabled =
-            pull(*it, "equalizer_enabled", c.playback.equalizer_enabled);
-        if (auto bands = it->find("equalizer_bands");
-            bands != it->end() && bands->is_array()) {
+        c.playback.equalizer_enabled = pull(*it, "equalizer_enabled", c.playback.equalizer_enabled);
+        if (auto bands = it->find("equalizer_bands"); bands != it->end() && bands->is_array()) {
             for (std::size_t i = 0; i < c.playback.equalizer_bands.size() && i < bands->size();
                  ++i) {
                 float b = (*bands)[i].get<float>();
                 if (b < -6.f) b = -6.f;
-                if (b > 6.f)  b =  6.f;
+                if (b > 6.f) b = 6.f;
                 c.playback.equalizer_bands[i] = b;
             }
         }
@@ -325,35 +325,39 @@ constexpr std::string_view status_text(int code) noexcept {
         case 400: return "Bad Request";
         case 404: return "Not Found";
         case 502: return "Bad Gateway";
-        default:  return "Internal Server Error";
+        default: return "Internal Server Error";
     }
 }
 
 constexpr std::string_view mime_for(std::string_view path) noexcept {
     auto ends = [&](std::string_view ext) {
-        return path.size() >= ext.size() &&
-               path.compare(path.size() - ext.size(), ext.size(), ext) == 0;
+        return path.size() >= ext.size() && path.ends_with(ext);
     };
     if (ends(".html")) return "text/html";
-    if (ends(".css"))  return "text/css";
-    if (ends(".js"))   return "application/javascript";
-    if (ends(".svg"))  return "image/svg+xml";
-    if (ends(".png"))  return "image/png";
+    if (ends(".css")) return "text/css";
+    if (ends(".js")) return "application/javascript";
+    if (ends(".svg")) return "image/svg+xml";
+    if (ends(".png")) return "image/png";
     if (ends(".json")) return "application/json";
     if (ends(".woff2")) return "font/woff2";
-    if (ends(".woff"))  return "font/woff";
+    if (ends(".woff")) return "font/woff";
     return "text/plain";
 }
 
 size_t header_size_t(std::string_view headers, std::string_view name_lower) {
     for (size_t i = 0; i + name_lower.size() < headers.size(); ++i) {
         bool match = true;
-        for (size_t k = 0; k < name_lower.size(); ++k)
-            if (static_cast<char>(std::tolower(static_cast<unsigned char>(headers[i + k])))
-                != name_lower[k]) { match = false; break; }
+        for (size_t k = 0; k < name_lower.size(); ++k) {
+            if (static_cast<char>(std::tolower(static_cast<unsigned char>(headers[i + k]))) !=
+                name_lower[k]) {
+                match = false;
+                break;
+            }
+        }
         if (!match) continue;
         size_t p = i + name_lower.size();
-        while (p < headers.size() && (headers[p] == ':' || headers[p] == ' ' || headers[p] == '\t')) ++p;
+        while (p < headers.size() && (headers[p] == ':' || headers[p] == ' ' || headers[p] == '\t'))
+            ++p;
         size_t v = 0;
         while (p < headers.size() && std::isdigit(static_cast<unsigned char>(headers[p])))
             v = v * 10 + static_cast<size_t>(headers[p++] - '0');
@@ -385,7 +389,7 @@ bool read_request(SOCKET client, Request& req) {
     req.body.assign(raw, header_end + 4, std::string::npos);
     while (req.body.size() < content_length) {
         const size_t need = std::min<size_t>(buf.size(), content_length - req.body.size());
-        int r = recv(client, buf.data(), static_cast<int>(need), 0);
+        int r             = recv(client, buf.data(), static_cast<int>(need), 0);
         if (r <= 0) break;
         req.body.append(buf.data(), static_cast<size_t>(r));
     }
@@ -498,8 +502,8 @@ struct HttpServer::Impl {
             return;
         }
         BOOL yes = TRUE;
-        setsockopt(srv_sock, SOL_SOCKET, SO_REUSEADDR,
-                   reinterpret_cast<const char*>(&yes), sizeof(yes));
+        setsockopt(srv_sock, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&yes),
+                   sizeof(yes));
 
         sockaddr_in addr{};
         addr.sin_family      = AF_INET;
@@ -548,18 +552,20 @@ struct HttpServer::Impl {
         Request req;
         if (!read_request(client, req)) return;
 
-        auto ok = [&](json j = {}) {
-            std::string body = j.empty()
-                                   ? std::string{R"({"ok":true})"}
-                                   : j.dump(-1, ' ', false, json::error_handler_t::replace);
+        auto ok = [&](const json& j = {}) {
+            std::string body = j.empty() ? std::string{R"({"ok":true})"}
+                                         : j.dump(-1, ' ', false, json::error_handler_t::replace);
             send_response(client, 200, body);
         };
         auto fail = [&](int code, std::string_view msg) {
             send_response(client, code, json{{"error", std::string{msg}}}.dump());
         };
 
-        try { dispatch(client, req, ok, fail); }
-        catch (...) { fail(400, "bad request body"); }
+        try {
+            dispatch(client, req, ok, fail);
+        } catch (...) {
+            fail(400, "bad request body");
+        }
     }
 
     template <class Ok, class Fail>
@@ -567,23 +573,24 @@ struct HttpServer::Impl {
         const auto& m = req.method;
         const auto& p = req.path;
 
-        if (m == "OPTIONS")                          return send_response(client, 200, "", "text/plain");
+        if (m == "OPTIONS") return send_response(client, 200, "", "text/plain");
 
-        if (m == "GET" && p == "/api/state")         return ok(build_state());
-        if (m == "GET" && p == "/api/events")        return send_event_snapshot(client);
-        if (m == "GET" && p == "/api/sources")       return ok(build_sources());
+        if (m == "GET" && p == "/api/state") return ok(build_state());
+        if (m == "GET" && p == "/api/events") return send_event_snapshot(client);
+        if (m == "GET" && p == "/api/sources") return ok(build_sources());
         if (m == "GET" && p.starts_with("/api/artwork")) {
             // ?v=<token> only busts the browser cache; the active source
             // always serves its current track's art.
-            if (auto* a = mgr.active())
+            if (auto* a = mgr.active()) {
                 if (auto img = a->artwork())
                     return send_response(client, 200, img->bytes, img->mime);
+            }
             return fail(404, "no artwork");
         }
-        if (m == "GET" && p == "/api/config")        return ok(config_to_json(store.snapshot()));
+        if (m == "GET" && p == "/api/config") return ok(config_to_json(store.snapshot()));
         if (m == "GET" && p == "/api/deps") {
             json tools = json::array();
-            for (const auto& d : deps.snapshot())
+            for (const auto& d : deps.snapshot()) {
                 tools.push_back(json{
                     {"name", d.name},
                     {"present", d.managed_present},
@@ -592,6 +599,7 @@ struct HttpServer::Impl {
                     {"total_bytes", d.total_bytes},
                     {"error", d.error},
                 });
+            }
             return ok(json{{"tools", std::move(tools)}});
         }
         if (m == "POST" && p == "/api/deps/refresh") {
@@ -603,22 +611,24 @@ struct HttpServer::Impl {
             if (!lf) return fail(404, "local_files not registered");
             auto snap   = lf->queue_snapshot();
             json tracks = json::array();
-            for (const auto& e : snap.entries)
+            for (const auto& e : snap.entries) {
                 tracks.push_back(
                     json{{"index", e.index}, {"title", e.title}, {"folder", e.folder}});
+            }
             return ok(json{{"cursor", snap.cursor}, {"tracks", tracks}});
         }
         if (m == "POST" && p == "/api/fs/browse") {
-            auto j = req.body.empty() ? json::object() : json::parse(req.body);
+            auto j                    = req.body.empty() ? json::object() : json::parse(req.body);
             std::filesystem::path dir = j.value("path", std::string{});
             json entries              = json::array();
-            for (const auto& e : sources::enumerate_dir(dir))
+            for (const auto& e : sources::enumerate_dir(dir)) {
                 entries.push_back(
                     json{{"name", e.name}, {"path", e.path}, {"has_children", e.has_children}});
+            }
             std::string parent;
             if (!dir.empty()) {
                 auto pp = dir.parent_path();
-                if (pp != dir) parent = path_s(pp);  // at a drive root, fall back to the drive list
+                if (pp != dir) parent = path_s(pp); // at a drive root, fall back to the drive list
             }
             return ok(json{{"parent", parent}, {"path", path_s(dir)}, {"entries", entries}});
         }
@@ -697,7 +707,7 @@ struct HttpServer::Impl {
                     {"is_default", d.is_default},
                 });
             }
-            auto snap = store.snapshot();
+            auto snap     = store.snapshot();
             json sessions = json::array();
             for (const auto& session : sources::enumerate_external_audio_media_sessions(
                      snap.external_audio.media_session_id)) {
@@ -718,8 +728,8 @@ struct HttpServer::Impl {
             });
         }
         if (m == "PUT" && p == "/api/external_audio/config") {
-            auto body = req.body.empty() ? json::object() : json::parse(req.body);
-            auto snap_before = store.snapshot();
+            auto body           = req.body.empty() ? json::object() : json::parse(req.body);
+            auto snap_before    = store.snapshot();
             const auto endpoint = body.value("endpoint_id", snap_before.external_audio.endpoint_id);
             const auto media_session_id =
                 body.value("media_session_id", snap_before.external_audio.media_session_id);
@@ -727,8 +737,8 @@ struct HttpServer::Impl {
             // store.patch() notifies the bridge observer synchronously, which
             // (un)registers the source and pushes the new config via set_config.
             store.patch([&](Config& c) {
-                c.external_audio.enabled = enabled;
-                c.external_audio.endpoint_id = endpoint;
+                c.external_audio.enabled          = enabled;
+                c.external_audio.endpoint_id      = endpoint;
                 c.external_audio.media_session_id = media_session_id;
             });
             auto snap = store.snapshot();
@@ -787,20 +797,30 @@ struct HttpServer::Impl {
         // Generic transport: POST /api/source/<name>/{play|pause|stop|next|previous}
         constexpr std::string_view prefix = "/api/source/";
         if (m == "POST" && p.starts_with(prefix)) {
-            const std::string_view rest{p.data() + prefix.size(), p.size() - prefix.size()};
-            const auto slash = rest.find('/');
+            const std::string_view rest = std::string_view{p}.substr(prefix.size());
+            const auto slash            = rest.find('/');
             if (slash == std::string_view::npos) return fail(400, "invalid route");
-            const std::string_view name{rest.data(), slash};
-            const std::string_view act {rest.data() + slash + 1, rest.size() - slash - 1};
-            auto* s = find(name);
+            const std::string_view name = rest.substr(0, slash);
+            const std::string_view act  = rest.substr(slash + 1);
+            auto* s                     = find(name);
             if (!s) return fail(404, "unknown source");
             const bool is_active = (s == mgr.active());
-            if      (act == "play")     s->play();
-            else if (act == "pause")    s->pause();
-            else if (act == "stop")     { s->stop();     if (is_active) mgr.ring().drain(); }
-            else if (act == "next")     { s->next();     if (is_active) mgr.ring().drain(); }
-            else if (act == "previous") { s->previous(); if (is_active) mgr.ring().drain(); }
-            else return fail(404, "unknown action");
+            if (act == "play") {
+                s->play();
+            } else if (act == "pause") {
+                s->pause();
+            } else if (act == "stop") {
+                s->stop();
+                if (is_active) mgr.ring().drain();
+            } else if (act == "next") {
+                s->next();
+                if (is_active) mgr.ring().drain();
+            } else if (act == "previous") {
+                s->previous();
+                if (is_active) mgr.ring().drain();
+            } else {
+                return fail(404, "unknown action");
+            }
             return ok();
         }
 
@@ -808,12 +828,13 @@ struct HttpServer::Impl {
         if (m == "GET" && !ui_dist.empty()) {
             const std::string rel = (p == "/") ? "index.html" : p.substr(1);
             if (serve_file(client, ui_dist / rel)) return;
-            if (p.find('.') == std::string::npos && serve_file(client, ui_dist / "index.html")) return;
+            if (p.find('.') == std::string::npos && serve_file(client, ui_dist / "index.html"))
+                return;
         }
         fail(404, "not found");
     }
 
-    void send_event_snapshot(SOCKET client) {
+    void send_event_snapshot(SOCKET client) const {
         auto body = build_state().dump(-1, ' ', false, json::error_handler_t::replace);
         std::string evt;
         evt.reserve(body.size() + 256);

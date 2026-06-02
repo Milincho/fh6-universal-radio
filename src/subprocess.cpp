@@ -8,7 +8,7 @@ namespace {
 
 // Read one Environment\Path value from the registry, expanding %FOO% refs.
 std::wstring read_registry_path(HKEY root, const wchar_t* subkey) {
-    DWORD bytes = 0;
+    DWORD bytes           = 0;
     constexpr DWORD flags = RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ | RRF_NOEXPAND;
     if (RegGetValueW(root, subkey, L"Path", flags, nullptr, nullptr, &bytes) != ERROR_SUCCESS ||
         bytes < sizeof(wchar_t))
@@ -68,7 +68,8 @@ std::wstring widen(std::string_view s) {
 
 std::string narrow(std::wstring_view ws) {
     if (ws.empty()) return {};
-    int n = WideCharToMultiByte(CP_UTF8, 0, ws.data(), (int)ws.size(), nullptr, 0, nullptr, nullptr);
+    int n =
+        WideCharToMultiByte(CP_UTF8, 0, ws.data(), (int)ws.size(), nullptr, 0, nullptr, nullptr);
     std::string out(n, '\0');
     WideCharToMultiByte(CP_UTF8, 0, ws.data(), (int)ws.size(), out.data(), n, nullptr, nullptr);
     return out;
@@ -131,17 +132,15 @@ HANDLE spawn_in_job(HANDLE job, const std::wstring& cmd, HANDLE stdin_h, HANDLE 
     auto launch = [&] {
         mut = cmd; // CreateProcessW may mutate the buffer; reset for the retry.
         return CreateProcessW(nullptr, mut.data(), nullptr, nullptr, TRUE,
-                              CREATE_NO_WINDOW | CREATE_SUSPENDED, nullptr, nullptr, &si,
-                              &pi) != 0;
+                              CREATE_NO_WINDOW | CREATE_SUSPENDED, nullptr, nullptr, &si, &pi) != 0;
     };
     if (!launch()) {
         // First attempt missed the binary. If it looks like a stale-PATH miss
         // (e.g. user just ran `winget install yt-dlp`), pull the live PATH
         // from the registry and try once more; otherwise propagate the error.
-        const DWORD ec = GetLastError();
-        const bool stale_path_miss =
-            (ec == ERROR_FILE_NOT_FOUND || ec == ERROR_PATH_NOT_FOUND) &&
-            refresh_path_from_registry();
+        const DWORD ec             = GetLastError();
+        const bool stale_path_miss = (ec == ERROR_FILE_NOT_FOUND || ec == ERROR_PATH_NOT_FOUND) &&
+                                     refresh_path_from_registry();
         if (!stale_path_miss || !launch()) {
             SetLastError(ec);
             return nullptr;
@@ -162,16 +161,15 @@ HANDLE spawn_in_job(HANDLE job, const std::wstring& cmd, HANDLE stdin_h, HANDLE 
 std::string describe_launch_failure(const std::wstring& bin, DWORD ec, bool from_config) {
     wchar_t resolved[MAX_PATH] = {};
     DWORD got = SearchPathW(nullptr, bin.c_str(), L".exe", MAX_PATH, resolved, nullptr);
-    std::string where = got ? narrow({resolved, got})
-                            : (from_config ? "(configured path not found on disk)"
-                                           : "(not found on PATH)");
+    std::string where =
+        got ? narrow({resolved, got})
+            : (from_config ? "(configured path not found on disk)" : "(not found on PATH)");
 
     std::string sys_msg;
     LPWSTR raw = nullptr;
-    DWORD len  = FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
-                                    FORMAT_MESSAGE_IGNORE_INSERTS,
-                                nullptr, ec, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPWSTR)&raw,
-                                0, nullptr);
+    DWORD len  = FormatMessageW(
+        FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+        nullptr, ec, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPWSTR)&raw, 0, nullptr);
     if (raw && len) {
         while (len && (raw[len - 1] == L'\r' || raw[len - 1] == L'\n' || raw[len - 1] == L' '))
             --len;
@@ -184,10 +182,10 @@ std::string describe_launch_failure(const std::wstring& bin, DWORD ec, bool from
         case ERROR_FILE_NOT_FOUND:
         case ERROR_PATH_NOT_FOUND:
             hint = from_config
-                       ? " -- the configured path does not exist. Fix it or clear it to fall "
-                         "back to PATH lookup."
-                       : " -- not on your PATH. Install it (winget install yt-dlp.yt-dlp / "
-                         "Gyan.FFmpeg) or set the full .exe path in config.toml.";
+                     ? " -- the configured path does not exist. Fix it or clear it to fall "
+                       "back to PATH lookup."
+                     : " -- not on your PATH. Install it (winget install yt-dlp.yt-dlp / "
+                       "Gyan.FFmpeg) or set the full .exe path in config.toml.";
             break;
         case ERROR_ACCESS_DENIED:
             hint = " -- likely blocked or quarantined by antivirus. Whitelist the binary and "
@@ -201,8 +199,7 @@ std::string describe_launch_failure(const std::wstring& bin, DWORD ec, bool from
             hint = " -- another process has the file open (often AV scanning). Retry in a few "
                    "seconds.";
             break;
-        default:
-            break;
+        default: break;
     }
 
     return std::format("ec={} ({}) tried={} resolved={}{}", ec,

@@ -62,9 +62,9 @@ public:
 
     struct QueueEntry {
         std::size_t index = 0;
-        std::string title;   // metadata title when indexed, else file stem
-        std::string artist;  // metadata artist when indexed
-        std::string folder;  // parent folder name
+        std::string title;  // metadata title when indexed, else file stem
+        std::string artist; // metadata artist when indexed
+        std::string folder; // parent folder name
     };
     struct QueueSnapshot {
         std::size_t cursor = 0;
@@ -126,7 +126,7 @@ private:
     // Always populates the metadata index in the background; reorders the
     // playlist by tags too when `resort` is set (album order, tag grouping).
     void start_index_locked(std::uint64_t gen, bool resort);
-    void index_worker(std::vector<std::filesystem::path> paths, std::wstring ff,
+    void index_worker(const std::vector<std::filesystem::path>& paths, const std::wstring& ff,
                       std::uint64_t gen, bool resort);
     void load_index_if_needed();
     void save_index();
@@ -137,7 +137,7 @@ private:
     // Returns nullptr if the file is unplayable / out of range.
     std::unique_ptr<Decoder> open_decoder_locked(std::size_t index);
     bool open_track_ffmpeg(Decoder& d, const std::filesystem::path& path);
-    bool open_track(std::size_t index);   // open + install as current
+    bool open_track(std::size_t index); // open + install as current
     void close_current();
     void discard_prefetch_locked() noexcept;
     bool promote_prefetch_locked(std::size_t expected_cursor);
@@ -149,7 +149,7 @@ private:
     std::filesystem::path index_path_;
     std::vector<std::filesystem::path> playlist_;
     std::size_t cursor_ = 0;
-    std::filesystem::path last_played_;  // bag-shuffle: avoid an immediate repeat on wrap
+    std::filesystem::path last_played_; // bag-shuffle: avoid an immediate repeat on wrap
 
     std::unique_ptr<Decoder> dec_;
     std::unique_ptr<Decoder> prefetch_dec_;

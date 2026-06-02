@@ -102,14 +102,13 @@ void ControlLoop::run(const std::stop_token& tok) {
         // Gated on R10 so we never yank the user off a station they chose.
         auto* active          = bridge_.manager().active();
         const bool busy       = active && (active->playback_state() == PlaybackState::playing ||
-                                           active->playback_state() == PlaybackState::buffering);
+                                     active->playback_state() == PlaybackState::buffering);
         const std::uint64_t c = bridge_.call_count();
         if (busy && c == prev_calls_) {
             if (++stale_ticks_ >= kStaleTickThreshold) {
                 stale_ticks_   = 0;
                 const auto now = std::chrono::steady_clock::now();
-                if (now - last_retune_ >= kRetuneCooldown &&
-                    game_state_.read().on_target_station &&
+                if (now - last_retune_ >= kRetuneCooldown && game_state_.read().on_target_station &&
                     game_state_.retune_streamer_station()) {
                     last_retune_ = now;
                     // The toggle may hand us a freshly-allocated RadioStreamFmod;
@@ -181,9 +180,10 @@ bool ControlLoop::acquire_target() noexcept {
     auto disc                   = discover_radio_instances(img_);
     const RadioInstance* chosen = select_instance(disc);
     if (!chosen) return false;
-    if (chosen->sound_name != kTargetSoundName)
+    if (chosen->sound_name != kTargetSoundName) {
         log::warn(R"([ctrl] no instance matches target "{}"; falling back to "{}")",
                   kTargetSoundName, chosen->sound_name);
+    }
 
     void* fmod_system = resolve_fmod_system(img_, chosen->radio_stream);
     if (!fmod_system) {
@@ -199,9 +199,9 @@ bool ControlLoop::acquire_target() noexcept {
 }
 
 const RadioInstance* ControlLoop::select_instance(const DiscoveryResult& disc) const noexcept {
-    const RadioInstance* target   = nullptr;  // first placeholder-named match, any handle state
-    const RadioInstance* fallback = nullptr;  // first instance of any name
-    for (auto& i : disc.instances) {
+    const RadioInstance* target   = nullptr; // first placeholder-named match, any handle state
+    const RadioInstance* fallback = nullptr; // first instance of any name
+    for (const auto& i : disc.instances) {
         const bool is_target = i.sound_name == kTargetSoundName;
         // FH6 can spin up several streams sharing the placeholder name (e.g.
         // an idle secondary mix); prefer the one whose channel is actually
@@ -232,7 +232,7 @@ void ControlLoop::run_playback_state_machines(time_point now) noexcept {
     auto* active = bridge_.manager().active();
     if (!active) {
         prev_r10_ = prev_race_ = prev_race_restart_ = false;
-        quick_skip_armed_ = false;
+        quick_skip_armed_                           = false;
         return;
     }
 
@@ -305,10 +305,10 @@ void ControlLoop::push_metadata() noexcept {
     std::string artist = info.artist;
     if (artist.empty()) {
         switch (a->playback_state()) {
-            case PlaybackState::playing:   artist = "Playing"; break;
+            case PlaybackState::playing: artist = "Playing"; break;
             case PlaybackState::buffering: artist = "Buffering"; break;
-            case PlaybackState::paused:    artist = "Paused"; break;
-            case PlaybackState::stopped:   artist = "Stopped"; break;
+            case PlaybackState::paused: artist = "Paused"; break;
+            case PlaybackState::stopped: artist = "Stopped"; break;
         }
     }
     meta_.update(title, artist);

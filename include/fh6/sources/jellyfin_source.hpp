@@ -20,7 +20,7 @@ struct JellyfinTrack {
     std::string title;
     std::string artist;
     std::string album;
-    std::string image_tag;   // ImageTags.Primary; empty when the item has no cover
+    std::string image_tag; // ImageTags.Primary; empty when the item has no cover
     std::uint64_t duration_ms = 0;
 };
 
@@ -33,7 +33,7 @@ public:
     JellyfinSource(JellyfinConfig cfg, std::filesystem::path ffmpeg_path);
     ~JellyfinSource() override;
 
-    std::string_view name() const noexcept override         { return "jellyfin"; }
+    std::string_view name() const noexcept override { return "jellyfin"; }
     std::string_view display_name() const noexcept override { return "Jellyfin"; }
 
     bool initialize() override;
@@ -68,7 +68,7 @@ private:
     struct Pipe;
 
     // mu_ held.
-    bool refresh_queue_locked();   // releases mu_ across the HTTP fetch, re-acquires to swap
+    bool refresh_queue_locked(); // releases mu_ across the HTTP fetch, re-acquires to swap
     std::unique_ptr<Pipe> spawn_pipe_locked(std::size_t for_idx);
     void start_pipe_locked();
     void stop_pipe_locked();

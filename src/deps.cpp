@@ -19,7 +19,7 @@ struct ToolSpec {
     const char* name;
     const wchar_t* out_name; // final name under bin/
     const wchar_t* url;
-    const char* sha256;      // lowercase hex, "" = skip verification
+    const char* sha256; // lowercase hex, "" = skip verification
 };
 
 constexpr std::array<ToolSpec, kToolCount> kSpecs{{
@@ -35,7 +35,9 @@ const ToolSpec& spec(Tool t) { return kSpecs[static_cast<std::size_t>(t)]; }
 
 struct WinHttp {
     HINTERNET h = nullptr;
-    ~WinHttp() { if (h) WinHttpCloseHandle(h); }
+    ~WinHttp() {
+        if (h) WinHttpCloseHandle(h);
+    }
     operator HINTERNET() const { return h; }
 };
 
@@ -66,23 +68,36 @@ bool download(const std::wstring& url, const std::filesystem::path& out,
     uc.dwHostNameLength  = (DWORD)-1;
     uc.dwUrlPathLength   = (DWORD)-1;
     uc.dwExtraInfoLength = (DWORD)-1;
-    if (!WinHttpCrackUrl(url.c_str(), 0, 0, &uc)) { err = "bad url"; return false; }
+    if (!WinHttpCrackUrl(url.c_str(), 0, 0, &uc)) {
+        err = "bad url";
+        return false;
+    }
     std::wstring host{uc.lpszHostName, uc.dwHostNameLength};
     std::wstring path{uc.lpszUrlPath, uc.dwUrlPathLength};
     path.append(uc.lpszExtraInfo, uc.dwExtraInfoLength);
 
     WinHttp ses{WinHttpOpen(L"fh6-universal-radio", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
                             WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0)};
-    if (!ses) { err = "WinHttpOpen failed"; return false; }
+    if (!ses) {
+        err = "WinHttpOpen failed";
+        return false;
+    }
     WinHttp con{WinHttpConnect(ses, host.c_str(), uc.nPort, 0)};
-    if (!con) { err = "connect failed"; return false; }
+    if (!con) {
+        err = "connect failed";
+        return false;
+    }
 
     const DWORD secure = (uc.nScheme == INTERNET_SCHEME_HTTPS) ? WINHTTP_FLAG_SECURE : 0;
     WinHttp req{WinHttpOpenRequest(con, L"GET", path.c_str(), nullptr, WINHTTP_NO_REFERER,
                                    WINHTTP_DEFAULT_ACCEPT_TYPES, secure)};
-    if (!req) { err = "open request failed"; return false; }
+    if (!req) {
+        err = "open request failed";
+        return false;
+    }
 
-    if (!WinHttpSendRequest(req, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) ||
+    if (!WinHttpSendRequest(req, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0,
+                            0) ||
         !WinHttpReceiveResponse(req, nullptr)) {
         err = "request failed";
         return false;
@@ -91,15 +106,18 @@ bool download(const std::wstring& url, const std::filesystem::path& out,
     DWORD code = 0, len = sizeof(code);
     WinHttpQueryHeaders(req, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, nullptr, &code,
                         &len, nullptr);
-    if (code != 200) { err = "http " + std::to_string(code); return false; }
+    if (code != 200) {
+        err = "http " + std::to_string(code);
+        return false;
+    }
 
     DWORD content = 0;
-    len = sizeof(content);
+    len           = sizeof(content);
     if (WinHttpQueryHeaders(req, WINHTTP_QUERY_CONTENT_LENGTH | WINHTTP_QUERY_FLAG_NUMBER, nullptr,
                             &content, &len, nullptr))
         total.store(content, std::memory_order_relaxed);
 
-    BCRYPT_ALG_HANDLE alg = nullptr;
+    BCRYPT_ALG_HANDLE alg   = nullptr;
     BCRYPT_HASH_HANDLE hash = nullptr;
     BCryptOpenAlgorithmProvider(&alg, BCRYPT_SHA256_ALGORITHM, nullptr, 0);
     BCryptCreateHash(alg, &hash, nullptr, 0, nullptr, 0, 0);
@@ -116,14 +134,24 @@ bool download(const std::wstring& url, const std::filesystem::path& out,
     bool ok = true;
     std::array<unsigned char, 64 * 1024> buf{};
     for (;;) {
-        if (stop.load(std::memory_order_acquire)) { ok = false; err = "aborted"; break; }
+        if (stop.load(std::memory_order_acquire)) {
+            ok  = false;
+            err = "aborted";
+            break;
+        }
         DWORD avail = 0;
-        if (!WinHttpReadData(req, buf.data(), (DWORD)buf.size(), &avail)) { ok = false; err = "read error"; break; }
+        if (!WinHttpReadData(req, buf.data(), (DWORD)buf.size(), &avail)) {
+            ok  = false;
+            err = "read error";
+            break;
+        }
         if (avail == 0) break;
         BCryptHashData(hash, buf.data(), avail, 0);
         DWORD wrote = 0;
         if (!WriteFile(f, buf.data(), avail, &wrote, nullptr) || wrote != avail) {
-            ok = false; err = "disk write error"; break;
+            ok  = false;
+            err = "disk write error";
+            break;
         }
         got.fetch_add(avail, std::memory_order_relaxed);
     }
@@ -169,8 +197,8 @@ void DependencyManager::retry() {
 void DependencyManager::run_worker() {
     std::error_code ec;
     for (std::size_t i = 0; i < kToolCount && !stop_.load(std::memory_order_acquire); ++i) {
-        Slot& s          = slots_[i];
-        const ToolSpec& sp = spec(static_cast<Tool>(i));
+        Slot& s             = slots_[i];
+        const ToolSpec& sp  = spec(static_cast<Tool>(i));
         const auto out_path = bin_dir_ / sp.out_name;
         if (std::filesystem::exists(out_path, ec)) {
             s.present.store(true, std::memory_order_release);
@@ -196,7 +224,10 @@ void DependencyManager::run_worker() {
         }
         if (ok) {
             std::filesystem::rename(dl, out_path, ec);
-            if (ec) { ok = false; err = ec.message(); }
+            if (ec) {
+                ok  = false;
+                err = ec.message();
+            }
         }
         if (!ok) std::filesystem::remove(dl, ec);
 

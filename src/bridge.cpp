@@ -37,8 +37,7 @@ std::filesystem::path module_directory(HMODULE self) {
 }
 
 SpotifyConfig anchor_spotify(SpotifyConfig sp, const std::filesystem::path& data_dir) {
-    if (!sp.cache_dir.empty() && sp.cache_dir.is_relative())
-        sp.cache_dir = data_dir / sp.cache_dir;
+    if (!sp.cache_dir.empty() && sp.cache_dir.is_relative()) sp.cache_dir = data_dir / sp.cache_dir;
     return sp;
 }
 
@@ -155,8 +154,8 @@ void run_bridge(HMODULE self) noexcept {
             mgr.unregister_source("external_audio");
         }
         if (c.spotify.enabled && !mgr.find("spotify")) {
-            auto src = std::make_unique<sources::SpotifySource>(
-                anchor_spotify(c.spotify, data_dir), c.general.ffmpeg_path);
+            auto src = std::make_unique<sources::SpotifySource>(anchor_spotify(c.spotify, data_dir),
+                                                                c.general.ffmpeg_path);
             if (src->initialize()) mgr.register_source(std::move(src));
         } else if (!c.spotify.enabled && mgr.find("spotify")) {
             mgr.unregister_source("spotify");
@@ -170,10 +169,13 @@ void run_bridge(HMODULE self) noexcept {
         if (snap.empty()) {
             log::warn("[bridge] no sources registered");
         } else if (snap.size() == 1) {
-            if (!mgr.switch_to(snap[0]->name()))
-                log::error("[bridge] failed to switch to sole registered source '{}'", snap[0]->name());
+            if (!mgr.switch_to(snap[0]->name())) {
+                log::error("[bridge] failed to switch to sole registered source '{}'",
+                           snap[0]->name());
+            }
         } else {
-            log::warn("[bridge] configured default/fallback sources not found among {} registered sources",
+            log::warn("[bridge] configured default/fallback sources not found among {} registered "
+                      "sources",
                       snap.size());
         }
     }
@@ -183,9 +185,10 @@ void run_bridge(HMODULE self) noexcept {
     bridge.set_force_stereo_audio(cfg.playback.force_stereo_audio);
 
     std::unique_ptr<fmod_bridge::ControlLoop> ctrl;
-    if (fns.ready())
+    if (fns.ready()) {
         ctrl = std::make_unique<fmod_bridge::ControlLoop>(bridge, img, cfg.playback,
                                                           cfg.audio.output_gain);
+    }
 
     for (auto* s : mgr.sources_snapshot()) s->set_playback_options(cfg.playback);
 
@@ -194,11 +197,14 @@ void run_bridge(HMODULE self) noexcept {
         const Config c = with_resolved_bins(raw, deps);
         sync_sources(c);
         if (!mgr.active()) {
-            if (!mgr.switch_to(c.general.default_source) && !mgr.switch_to(c.general.fallback_source)) {
+            if (!mgr.switch_to(c.general.default_source) &&
+                !mgr.switch_to(c.general.fallback_source)) {
                 auto snap = mgr.sources_snapshot();
                 if (snap.size() == 1) {
-                    if (!mgr.switch_to(snap[0]->name()))
-                        log::error("[bridge] failed to switch to sole registered source '{}'", snap[0]->name());
+                    if (!mgr.switch_to(snap[0]->name())) {
+                        log::error("[bridge] failed to switch to sole registered source '{}'",
+                                   snap[0]->name());
+                    }
                 }
             }
         }

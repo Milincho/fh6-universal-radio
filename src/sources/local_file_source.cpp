@@ -33,8 +33,8 @@ namespace fh6::sources {
 
 namespace {
 
-constexpr std::uint32_t kSampleRate = 48000;
-constexpr std::size_t kFrameBytes   = 4; // s16 * 2ch
+constexpr std::uint32_t kSampleRate  = 48000;
+constexpr std::size_t kFrameBytes    = 4; // s16 * 2ch
 constexpr std::uint64_t kBytesPerSec = std::uint64_t{kSampleRate} * kFrameBytes;
 
 using subprocess::create_kill_on_close_job;
@@ -61,8 +61,7 @@ std::vector<std::filesystem::path> parse_m3u_playlist(const std::filesystem::pat
     const auto dir = file.parent_path();
     std::string line;
     while (std::getline(in, line)) {
-        while (!line.empty() && (line.back() == '\r' || line.back() == '\n'))
-            line.pop_back();
+        while (!line.empty() && (line.back() == '\r' || line.back() == '\n')) line.pop_back();
         if (line.empty() || line[0] == '#') continue;
         std::filesystem::path p = std::filesystem::path{line};
         if (p.is_relative()) p = dir / p;
@@ -80,7 +79,7 @@ struct ProbedMetadata {
 
 // Leading integer of values like "5", "5/12", "05" -> 5; 0 when absent.
 int parse_leading_int(std::string_view v) noexcept {
-    int n = 0;
+    int n    = 0;
     bool any = false;
     for (char c : v) {
         if (c < '0' || c > '9') break;
@@ -94,10 +93,10 @@ int parse_leading_int(std::string_view v) noexcept {
 std::string sniff_image_mime(const std::string& d) noexcept {
     auto u = [&](std::size_t i) { return static_cast<unsigned char>(d[i]); };
     if (d.size() >= 3 && u(0) == 0xFF && u(1) == 0xD8 && u(2) == 0xFF) return "image/jpeg";
-    if (d.size() >= 8 && u(0) == 0x89 && d[1] == 'P' && d[2] == 'N' && d[3] == 'G') return "image/png";
-    if (d.size() >= 6 && (d.compare(0, 6, "GIF87a") == 0 || d.compare(0, 6, "GIF89a") == 0))
-        return "image/gif";
-    if (d.size() >= 12 && d.compare(0, 4, "RIFF") == 0 && d.compare(8, 4, "WEBP") == 0)
+    if (d.size() >= 8 && u(0) == 0x89 && d[1] == 'P' && d[2] == 'N' && d[3] == 'G')
+        return "image/png";
+    if (d.size() >= 6 && (d.starts_with("GIF87a") || d.starts_with("GIF89a"))) return "image/gif";
+    if (d.size() >= 12 && d.starts_with("RIFF") && d.compare(8, 4, "WEBP") == 0)
         return "image/webp";
     return {};
 }
@@ -115,15 +114,15 @@ ArtworkImage extract_cover(const std::wstring& ff_bin, const std::filesystem::pa
     }
     SetHandleInformation(rd, HANDLE_FLAG_INHERIT, 0);
 
-    HANDLE nul_in  = open_nul(GENERIC_READ);
-    HANDLE err_log = open_stderr_log();
-    const std::wstring cmd =
-        quote(ff_bin) + L" -hide_banner -nostdin -loglevel error -i " + quote(file.wstring()) +
-        L" -an -c:v copy -frames:v 1 -f image2pipe pipe:1";
+    HANDLE nul_in          = open_nul(GENERIC_READ);
+    HANDLE err_log         = open_stderr_log();
+    const std::wstring cmd = quote(ff_bin) + L" -hide_banner -nostdin -loglevel error -i " +
+                             quote(file.wstring()) +
+                             L" -an -c:v copy -frames:v 1 -f image2pipe pipe:1";
     HANDLE proc = spawn_in_job(job, cmd, nul_in, wr, err_log);
 
     CloseHandle(wr);
-    if (nul_in)  CloseHandle(nul_in);
+    if (nul_in) CloseHandle(nul_in);
     if (err_log) CloseHandle(err_log);
     if (!proc) {
         CloseHandle(rd);
@@ -170,14 +169,13 @@ ProbedMetadata probe_metadata(const std::wstring& ff_bin, const std::filesystem:
     }
     SetHandleInformation(rd, 0, HANDLE_FLAG_INHERIT);
 
-    HANDLE nul_in  = open_nul(GENERIC_READ);
-    HANDLE nul_out = open_nul(GENERIC_WRITE);
-    const std::wstring cmd =
-        quote(ff_bin) + L" -hide_banner -nostdin -i " + quote(file.wstring());
-    HANDLE proc = spawn_in_job(job, cmd, nul_in, nul_out, wr);
+    HANDLE nul_in          = open_nul(GENERIC_READ);
+    HANDLE nul_out         = open_nul(GENERIC_WRITE);
+    const std::wstring cmd = quote(ff_bin) + L" -hide_banner -nostdin -i " + quote(file.wstring());
+    HANDLE proc            = spawn_in_job(job, cmd, nul_in, nul_out, wr);
 
     CloseHandle(wr);
-    if (nul_in)  CloseHandle(nul_in);
+    if (nul_in) CloseHandle(nul_in);
     if (nul_out) CloseHandle(nul_out);
     if (!proc) {
         CloseHandle(rd);
@@ -198,6 +196,7 @@ ProbedMetadata probe_metadata(const std::wstring& ff_bin, const std::filesystem:
         while (pos < err.size() && err[pos] == ' ') ++pos;
         int h = 0, m = 0;
         double s = 0.0;
+        // NOLINTNEXTLINE(cert-err34-c): return value checked; ffmpeg duration text is bounded
         if (std::sscanf(err.c_str() + pos, "%d:%d:%lf", &h, &m, &s) == 3)
             out.duration_ms = static_cast<std::uint64_t>((h * 3600 + m * 60) * 1000.0 + s * 1000.0);
     }
@@ -212,8 +211,7 @@ ProbedMetadata probe_metadata(const std::wstring& ff_bin, const std::filesystem:
 
         while (!line.empty() && (line.front() == ' ' || line.front() == '\t'))
             line.remove_prefix(1);
-        while (!line.empty() && (line.back() == '\r' || line.back() == ' '))
-            line.remove_suffix(1);
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.remove_suffix(1);
         auto colon = line.find(':');
         if (colon == std::string_view::npos) continue;
         auto key = line.substr(0, colon);
@@ -222,15 +220,21 @@ ProbedMetadata probe_metadata(const std::wstring& ff_bin, const std::filesystem:
         while (!val.empty() && val.front() == ' ') val.remove_prefix(1);
         if (val.empty()) continue;
 
-        if (out.title.empty()              && ieq_str(key, "title"))        out.title.assign(val);
-        else if (out.artist.empty()        && ieq_str(key, "artist"))       out.artist.assign(val);
-        else if (out.album.empty()         && ieq_str(key, "album"))        out.album.assign(val);
-        else if (out.album_artist.empty()  && (ieq_str(key, "album_artist") ||
-                                               ieq_str(key, "ALBUM ARTIST") ||
-                                               ieq_str(key, "albumartist"))) out.album_artist.assign(val);
-        else if (out.track_no == 0         && ieq_str(key, "track"))        out.track_no = parse_leading_int(val);
-        else if (out.disc_no == 0          && (ieq_str(key, "disc") ||
-                                               ieq_str(key, "discnumber")))  out.disc_no = parse_leading_int(val);
+        if (out.title.empty() && ieq_str(key, "title")) {
+            out.title.assign(val);
+        } else if (out.artist.empty() && ieq_str(key, "artist")) {
+            out.artist.assign(val);
+        } else if (out.album.empty() && ieq_str(key, "album")) {
+            out.album.assign(val);
+        } else if (out.album_artist.empty() &&
+                   (ieq_str(key, "album_artist") || ieq_str(key, "ALBUM ARTIST") ||
+                    ieq_str(key, "albumartist"))) {
+            out.album_artist.assign(val);
+        } else if (out.track_no == 0 && ieq_str(key, "track")) {
+            out.track_no = parse_leading_int(val);
+        } else if (out.disc_no == 0 && (ieq_str(key, "disc") || ieq_str(key, "discnumber"))) {
+            out.disc_no = parse_leading_int(val);
+        }
     }
     return out;
 }
@@ -245,7 +249,7 @@ std::string norm_path_key(const std::filesystem::path& p) {
 }
 bool path_within(const std::string& child, const std::string& parent) noexcept {
     if (parent.empty() || child.size() < parent.size()) return false;
-    if (child.compare(0, parent.size(), parent) != 0) return false;
+    if (!child.starts_with(parent)) return false;
     return child.size() == parent.size() || child[parent.size()] == '/';
 }
 
@@ -259,7 +263,7 @@ std::mt19937& thread_rng() {
 struct LocalFileSource::Decoder {
     ma_decoder ma{};
     bool ma_open = false;
-    bool ma_eof = false;
+    bool ma_eof  = false;
 
     HANDLE ff_job              = nullptr;
     HANDLE ff_proc             = nullptr;
@@ -271,24 +275,23 @@ struct LocalFileSource::Decoder {
     ArtworkImage art{};
     // Per-decoder so a prefetched track promotes with its own ReplayGain
     // multiplier instead of inheriting the current track's.
-    float loudness_coef     = 1.0f;
-    std::size_t for_cursor  = 0;
+    float loudness_coef    = 1.0f;
+    std::size_t for_cursor = 0;
 
     bool any_open() const noexcept { return ma_open || ff_pipe != nullptr; }
 
     ~Decoder() {
-        if (ma_open)  ma_decoder_uninit(&ma);
-        if (ff_pipe)  CloseHandle(ff_pipe);
-        if (ff_proc)  CloseHandle(ff_proc);
+        if (ma_open) ma_decoder_uninit(&ma);
+        if (ff_pipe) CloseHandle(ff_pipe);
+        if (ff_proc) CloseHandle(ff_proc);
         // KILL_ON_JOB_CLOSE on the job reaps ffmpeg if it's still resident.
-        if (ff_job)   CloseHandle(ff_job);
+        if (ff_job) CloseHandle(ff_job);
     }
 };
 
 LocalFileSource::LocalFileSource(LocalFilesConfig cfg, std::filesystem::path ffmpeg_path,
                                  std::filesystem::path index_path)
-    : cfg_{std::move(cfg)},
-      ffmpeg_path_{std::move(ffmpeg_path)},
+    : cfg_{std::move(cfg)}, ffmpeg_path_{std::move(ffmpeg_path)},
       index_path_{std::move(index_path)} {}
 
 LocalFileSource::~LocalFileSource() {
@@ -337,8 +340,8 @@ void LocalFileSource::order_album_by_folder_locked() {
         if (inserted) order.push_back(key);
         it->second.push_back(std::move(p));
     }
-    for (auto& [_, v] : groups) std::ranges::sort(v);  // track order within the album
-    std::shuffle(order.begin(), order.end(), thread_rng());  // album order
+    for (auto& [_, v] : groups) std::ranges::sort(v);       // track order within the album
+    std::shuffle(order.begin(), order.end(), thread_rng()); // album order
     playlist_.clear();
     for (auto& key : order)
         for (auto& p : groups[key]) playlist_.push_back(std::move(p));
@@ -353,42 +356,41 @@ void LocalFileSource::apply_order_locked(const LocalStation& st) {
             return pa != pb ? pa < pb : a.filename() < b.filename();
         });
     } else if (st.order == "album") {
-        order_album_by_folder_locked();  // immediate; tag re-sort refines it later
+        order_album_by_folder_locked(); // immediate; tag re-sort refines it later
     } else {
-        shuffle_in_place_locked(playlist_);  // "shuffle"
+        shuffle_in_place_locked(playlist_); // "shuffle"
     }
 }
 
 void LocalFileSource::rebuild_playlist() {
-    stop_tag_thread();   // join any in-flight tag re-sort before mutating state
+    stop_tag_thread(); // join any in-flight tag re-sort before mutating state
 
     // Snapshot what we need, then scan off-lock: the directory walk and .m3u
     // parsing are heavy IO and pump() also takes mu_, so scanning under the lock
     // would stall the audio thread on large libraries. Mirrors index_worker's
     // snapshot -> work -> reacquire -> gen-check handover.
-    LocalStation              st;
-    std::vector<std::string>  formats;
-    std::filesystem::path     cur;
-    std::uint64_t             gen;
+    LocalStation st;
+    std::vector<std::string> formats;
+    std::filesystem::path cur;
+    std::uint64_t gen;
     {
         std::scoped_lock lk{mu_};
-        discard_prefetch_locked();   // playlist contents/order are about to change
-        gen = ++rebuild_gen_;
+        discard_prefetch_locked(); // playlist contents/order are about to change
+        gen                   = ++rebuild_gen_;
         const LocalStation* a = active_station_locked();
         if (!a || a->roots.empty()) {
             playlist_.clear();
             cursor_ = 0;
-            dec_.reset();            // no station -> nothing to play
+            dec_.reset(); // no station -> nothing to play
             return;
         }
         st      = *a;
         formats = cfg_.supported_formats;
-        cur     = (dec_ && cursor_ < playlist_.size()) ? playlist_[cursor_]
-                                                       : std::filesystem::path{};
+        cur = (dec_ && cursor_ < playlist_.size()) ? playlist_[cursor_] : std::filesystem::path{};
     }
 
     std::vector<std::filesystem::path> built;
-    std::set<std::filesystem::path>    seen;
+    std::set<std::filesystem::path> seen;
 
     std::vector<std::string> excluded;
     excluded.reserve(st.excluded.size());
@@ -402,9 +404,10 @@ void LocalFileSource::rebuild_playlist() {
     auto add_file = [&](const std::filesystem::path& p) {
         const auto ext = p.extension().string();
         if (ieq_str(ext, ".m3u") || ieq_str(ext, ".m3u8")) {
-            for (auto& entry : parse_m3u_playlist(p))
+            for (auto& entry : parse_m3u_playlist(p)) {
                 if (extension_matches(entry, formats) && seen.insert(entry).second)
                     built.push_back(std::move(entry));
+            }
         } else if (extension_matches(p, formats) && seen.insert(p).second) {
             built.push_back(p);
         }
@@ -415,7 +418,8 @@ void LocalFileSource::rebuild_playlist() {
         if (root.empty() || !std::filesystem::exists(root, ec)) continue;
         if (st.recursive) {
             std::filesystem::recursive_directory_iterator it(
-                root, std::filesystem::directory_options::skip_permission_denied, ec), end;
+                root, std::filesystem::directory_options::skip_permission_denied, ec),
+                end;
             for (; it != end && !ec; it.increment(ec)) {
                 std::error_code fe;
                 if (it->is_directory(fe)) {
@@ -431,8 +435,8 @@ void LocalFileSource::rebuild_playlist() {
     }
 
     std::scoped_lock lk{mu_};
-    if (rebuild_gen_.load(std::memory_order_acquire) != gen) return;  // superseded mid-scan
-    discard_prefetch_locked();       // pump() may have prefetched against the old queue
+    if (rebuild_gen_.load(std::memory_order_acquire) != gen) return; // superseded mid-scan
+    discard_prefetch_locked(); // pump() may have prefetched against the old queue
     playlist_ = std::move(built);
     apply_order_locked(st);
     // Keep the current track playing if the rebuilt queue still has it (an order
@@ -441,8 +445,11 @@ void LocalFileSource::rebuild_playlist() {
     cursor_ = 0;
     if (!cur.empty()) {
         auto it = std::ranges::find(playlist_, cur);
-        if (it != playlist_.end()) cursor_ = (std::size_t)(it - playlist_.begin());
-        else dec_.reset();
+        if (it != playlist_.end()) {
+            cursor_ = (std::size_t)(it - playlist_.begin());
+        } else {
+            dec_.reset();
+        }
     }
     // Populate the metadata index in the background for every station so the
     // queue shows real titles and search matches them; reorder by tags only
@@ -462,8 +469,8 @@ void LocalFileSource::start_index_locked(std::uint64_t gen, bool resort) {
     if (playlist_.empty()) return;
     auto paths      = playlist_;
     std::wstring ff = ffmpeg_path_.empty() ? L"ffmpeg" : ffmpeg_path_.wstring();
-    tag_thread_     = std::thread(&LocalFileSource::index_worker, this, std::move(paths),
-                                  std::move(ff), gen, resort);
+    tag_thread_ = std::thread(&LocalFileSource::index_worker, this, std::move(paths), std::move(ff),
+                              gen, resort);
 }
 
 void LocalFileSource::load_index_if_needed() {
@@ -476,7 +483,7 @@ void LocalFileSource::load_index_if_needed() {
     try {
         nlohmann::json j;
         in >> j;
-        for (auto& [k, v] : j.items()) {
+        for (const auto& [k, v] : j.items()) {
             TrackMeta m;
             m.mtime        = v.value("mtime", std::int64_t{0});
             m.album        = v.value("album", std::string{});
@@ -496,7 +503,7 @@ void LocalFileSource::save_index() {
     nlohmann::json j = nlohmann::json::object();
     {
         std::scoped_lock il{index_mu_};
-        for (auto& [k, m] : index_)
+        for (auto& [k, m] : index_) {
             j[k] = nlohmann::json{{"mtime", m.mtime},
                                   {"album", m.album},
                                   {"album_artist", m.album_artist},
@@ -505,10 +512,11 @@ void LocalFileSource::save_index() {
                                   {"track_no", m.track_no},
                                   {"disc_no", m.disc_no},
                                   {"duration_ms", m.duration_ms}};
+        }
     }
     std::error_code ec;
-    auto tmp = index_path_;
-    tmp += ".tmp";
+    auto tmp  = index_path_;
+    tmp      += ".tmp";
     {
         std::ofstream os(tmp, std::ios::binary | std::ios::trunc);
         if (!os) return;
@@ -522,8 +530,8 @@ void LocalFileSource::save_index() {
         std::filesystem::remove(index_path_, rep);
         std::filesystem::rename(tmp, index_path_, rep);
         if (rep) {
-            log::warn("[local] could not write metadata index {}: {}",
-                      index_path_.string(), rep.message());
+            log::warn("[local] could not write metadata index {}: {}", index_path_.string(),
+                      rep.message());
             std::filesystem::remove(tmp, rep);
         }
     }
@@ -547,23 +555,24 @@ LocalFileSource::order_album_by_tags(const std::vector<std::filesystem::path>& i
             if (it != index_.end() &&
                 !(it->second.album.empty() && it->second.album_artist.empty())) {
                 const auto& m = it->second;
-                gkey          = (m.album_artist.empty() ? m.artist : m.album_artist) + '\x01' + m.album;
-                disc_no       = m.disc_no;
-                track_no      = m.track_no;
+                gkey     = (m.album_artist.empty() ? m.artist : m.album_artist) + '\x01' + m.album;
+                disc_no  = m.disc_no;
+                track_no = m.track_no;
             } else {
-                gkey = std::string{'\x02'} + p.parent_path().string();  // fallback: by folder
+                gkey = std::string{'\x02'} + p.parent_path().string(); // fallback: by folder
             }
             auto [g, ins] = groups.try_emplace(gkey);
             if (ins) order.push_back(gkey);
             g->second.push_back(Item{p, disc_no, track_no, p.filename().string()});
         }
     }
-    for (auto& [_, v] : groups)
+    for (auto& [_, v] : groups) {
         std::ranges::sort(v, [](const Item& a, const Item& b) {
             if (a.disc != b.disc) return a.disc < b.disc;
             if (a.track != b.track) return a.track < b.track;
             return a.fname < b.fname;
         });
+    }
     std::shuffle(order.begin(), order.end(), thread_rng());
     std::vector<std::filesystem::path> out;
     out.reserve(in.size());
@@ -572,8 +581,8 @@ LocalFileSource::order_album_by_tags(const std::vector<std::filesystem::path>& i
     return out;
 }
 
-void LocalFileSource::index_worker(std::vector<std::filesystem::path> paths, std::wstring ff,
-                                   std::uint64_t gen, bool resort) {
+void LocalFileSource::index_worker(const std::vector<std::filesystem::path>& paths,
+                                   const std::wstring& ff, std::uint64_t gen, bool resort) {
     load_index_if_needed();
     bool probed_any = false;
     for (const auto& p : paths) {
@@ -615,7 +624,7 @@ void LocalFileSource::index_worker(std::vector<std::filesystem::path> paths, std
     std::scoped_lock lk{mu_};
     if (tag_cancel_.load(std::memory_order_acquire) ||
         rebuild_gen_.load(std::memory_order_acquire) != gen)
-        return;  // a newer rebuild superseded this pass
+        return; // a newer rebuild superseded this pass
     std::filesystem::path cur =
         (dec_ && cursor_ < playlist_.size()) ? playlist_[cursor_] : std::filesystem::path{};
     playlist_ = std::move(ordered);
@@ -635,22 +644,21 @@ void LocalFileSource::close_current() {
     dec_.reset();
 }
 
-std::unique_ptr<LocalFileSource::Decoder>
-LocalFileSource::open_decoder_locked(std::size_t index) {
+std::unique_ptr<LocalFileSource::Decoder> LocalFileSource::open_decoder_locked(std::size_t index) {
     if (playlist_.empty()) return nullptr;
     const std::size_t resolved = index % playlist_.size();
     const auto& path           = playlist_[resolved];
 
-    auto d         = std::make_unique<Decoder>();
-    d->for_cursor  = resolved;
+    auto d        = std::make_unique<Decoder>();
+    d->for_cursor = resolved;
 
     const std::wstring ff = ffmpeg_path_.empty() ? L"ffmpeg" : ffmpeg_path_.wstring();
-    auto meta      = probe_metadata(ff, path);
-    d->info.duration_ms = meta.duration_ms;
-    d->info.title       = std::move(meta.title);
-    d->info.artist      = std::move(meta.artist);
-    d->info.album       = std::move(meta.album);
-    d->art              = extract_cover(ff, path);
+    auto meta             = probe_metadata(ff, path);
+    d->info.duration_ms   = meta.duration_ms;
+    d->info.title         = std::move(meta.title);
+    d->info.artist        = std::move(meta.artist);
+    d->info.album         = std::move(meta.album);
+    d->art                = extract_cover(ff, path);
 
     ma_decoder_config mc = ma_decoder_config_init(ma_format_s16, 2, kSampleRate);
     if (ma_decoder_init_file(path.string().c_str(), &mc, &d->ma) == MA_SUCCESS) {
@@ -701,22 +709,22 @@ bool LocalFileSource::open_track_ffmpeg(Decoder& d, const std::filesystem::path&
     if (!CreatePipe(&rd, &wr, &sa, 1 << 20)) return false;
     SetHandleInformation(rd, 0, HANDLE_FLAG_INHERIT);
 
-    HANDLE nul_in  = open_nul(GENERIC_READ);
-    HANDLE err_log = open_stderr_log();
-    std::wstring cmd =
-        quote(ff) + L" -hide_banner -loglevel error -nostdin -vn -i " + quote(path.wstring()) +
-        L" -f s16le -acodec pcm_s16le -ar 48000 -ac 2 pipe:1";
+    HANDLE nul_in    = open_nul(GENERIC_READ);
+    HANDLE err_log   = open_stderr_log();
+    std::wstring cmd = quote(ff) + L" -hide_banner -loglevel error -nostdin -vn -i " +
+                       quote(path.wstring()) +
+                       L" -f s16le -acodec pcm_s16le -ar 48000 -ac 2 pipe:1";
 
-    d.ff_proc = spawn_in_job(d.ff_job, cmd, nul_in, wr, err_log);
+    d.ff_proc      = spawn_in_job(d.ff_job, cmd, nul_in, wr, err_log);
     const DWORD ec = d.ff_proc ? 0u : GetLastError();
     CloseHandle(wr);
-    if (nul_in)  CloseHandle(nul_in);
+    if (nul_in) CloseHandle(nul_in);
     if (err_log) CloseHandle(err_log);
     if (!d.ff_proc) {
         CloseHandle(rd);
         log::warn("[local] ffmpeg fallback: failed to launch -- {}",
                   describe_launch_failure(ff, ec, !ffmpeg_path_.empty()));
-        return false;  // ~Decoder reaps the job
+        return false; // ~Decoder reaps the job
     }
 
     d.ff_pipe = rd;
@@ -825,8 +833,8 @@ void LocalFileSource::next() {
 
 void LocalFileSource::previous() {
     std::scoped_lock lk{mu_};
-    if (playlist_.empty()) return;   // size()-1 would underflow size_t
-    discard_prefetch_locked();       // prefetch targets cursor+1; previous() rewinds
+    if (playlist_.empty()) return; // size()-1 would underflow size_t
+    discard_prefetch_locked();     // prefetch targets cursor+1; previous() rewinds
     open_track(cursor_ == 0 ? playlist_.size() - 1 : cursor_ - 1);
     state_.store(PlaybackState::playing, std::memory_order_release);
 }
@@ -837,9 +845,7 @@ void LocalFileSource::pump(RingBuffer& ring) {
     std::scoped_lock lk{mu_};
     if (!dec_ || !dec_->any_open()) return;
 
-    const float rg = volume_norm_.load(std::memory_order_acquire)
-                         ? dec_->loudness_coef
-                         : 1.0f;
+    const float rg      = volume_norm_.load(std::memory_order_acquire) ? dec_->loudness_coef : 1.0f;
     auto advance_at_eof = [&] {
         if (!eof_advance_locked()) state_.store(PlaybackState::stopped, std::memory_order_release);
     };
@@ -849,7 +855,7 @@ void LocalFileSource::pump(RingBuffer& ring) {
             const std::size_t n = frames * 2;
             for (std::size_t i = 0; i < n; ++i) {
                 float s = static_cast<float>(samples[i]) * rg;
-                if (s >  32767.0f) s =  32767.0f;
+                if (s > 32767.0f) s = 32767.0f;
                 if (s < -32768.0f) s = -32768.0f;
                 samples[i] = static_cast<int16_t>(s);
             }
@@ -902,8 +908,7 @@ void LocalFileSource::pump(RingBuffer& ring) {
 
     auto update_position = [&] {
         const std::uint64_t queued = ring.readable();
-        const std::uint64_t played =
-            dec_->ff_bytes_out > queued ? dec_->ff_bytes_out - queued : 0;
+        const std::uint64_t played = dec_->ff_bytes_out > queued ? dec_->ff_bytes_out - queued : 0;
         position_ms_.store(played * 1000ull / kBytesPerSec, std::memory_order_release);
     };
 
@@ -950,9 +955,11 @@ TrackInfo LocalFileSource::current_track() const {
     TrackInfo info;
     if (dec_) {
         info = dec_->info;
-        if (!dec_->art.bytes.empty() && dec_->for_cursor < playlist_.size())
-            info.artwork_url = "/api/artwork?v=" +
+        if (!dec_->art.bytes.empty() && dec_->for_cursor < playlist_.size()) {
+            info.artwork_url =
+                "/api/artwork?v=" +
                 std::to_string(std::hash<std::string>{}(playlist_[dec_->for_cursor].string()));
+        }
     }
     info.position_ms = position_ms_.load(std::memory_order_acquire);
     return info;
@@ -1028,9 +1035,10 @@ std::string LocalFileSource::auth_instructions() const {
     const LocalStation* st = active_station_locked();
     if (!st || st->roots.empty())
         return "Add a music folder to this station in the Local Files card, then Save.";
-    if (playlist_.empty())
+    if (playlist_.empty()) {
         return "No audio files matching the configured formats were found in this station's "
                "folders.";
+    }
     return {};
 }
 
@@ -1076,8 +1084,8 @@ void LocalFileSource::set_ffmpeg_path(std::filesystem::path p) {
 void LocalFileSource::set_playback_options(const PlaybackConfig& opts) {
     volume_norm_.store(opts.volume_normalization, std::memory_order_release);
     eq_.set_options(opts.equalizer_enabled, opts.equalizer_bands, (float)kSampleRate);
-    const bool prev = prebuffer_next_.exchange(opts.prebuffer_next_track,
-                                                std::memory_order_acq_rel);
+    const bool prev =
+        prebuffer_next_.exchange(opts.prebuffer_next_track, std::memory_order_acq_rel);
     if (prev && !opts.prebuffer_next_track) {
         std::scoped_lock lk{mu_};
         discard_prefetch_locked();

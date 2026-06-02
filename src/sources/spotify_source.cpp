@@ -3,6 +3,7 @@
 #include "fh6/log.hpp"
 #include "fh6/net/http_get.hpp"
 
+#include <algorithm>
 #include <nlohmann/json.hpp>
 
 #include <windows.h>
@@ -19,12 +20,12 @@ namespace fh6::sources {
 namespace {
 
 // 48 kHz * 2 ch * 2 bytes = 192 000 B/s, so PCM position maps to time at 192 B/ms.
-constexpr uint64_t    kBytesPerMs          = 192;
-constexpr std::size_t kMaxBufferBytes      = 28800;  // 150 ms of in-flight PCM
-constexpr std::size_t kPipeChunk           = 4096;   // OS-minimum pipe / read granularity
+constexpr uint64_t kBytesPerMs        = 192;
+constexpr std::size_t kMaxBufferBytes = 28800; // 150 ms of in-flight PCM
+constexpr std::size_t kPipeChunk      = 4096;  // OS-minimum pipe / read granularity
 // A track-load event arriving while the previous track is still this far from
 // its end means the user skipped inside the Spotify app -- adopt it at once.
-constexpr uint64_t    kExternalSkipGuardMs = 32000;
+constexpr uint64_t kExternalSkipGuardMs = 32000;
 
 std::filesystem::path stderr_log_path() {
     return std::filesystem::temp_directory_path() / "fh6-spotify-stderr.log";
@@ -32,11 +33,11 @@ std::filesystem::path stderr_log_path() {
 
 // Press-and-release one extended media key (next/prev fallback).
 void send_media_key(WORD vk) {
-    INPUT ip[2]      = {};
-    ip[0].type       = ip[1].type = INPUT_KEYBOARD;
-    ip[0].ki.wVk     = ip[1].ki.wVk = vk;
-    ip[0].ki.dwFlags = KEYEVENTF_EXTENDEDKEY;
-    ip[1].ki.dwFlags = KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP;
+    INPUT ip[2] = {};
+    ip[0].type = ip[1].type = INPUT_KEYBOARD;
+    ip[0].ki.wVk = ip[1].ki.wVk = vk;
+    ip[0].ki.dwFlags            = KEYEVENTF_EXTENDEDKEY;
+    ip[1].ki.dwFlags            = KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP;
     SendInput(2, ip, sizeof(INPUT));
 }
 
@@ -54,9 +55,9 @@ std::string unescape_debug(const std::string& s) {
 }
 
 std::string spotify_uri_to_url(std::string uri) {
-    if (uri.rfind("spotify:", 0) == 0) uri.erase(0, 8);
-    std::replace(uri.begin(), uri.end(), ':', '/');
-    return "https://open.spotify.com/" + uri;   // spotify:track:ID -> .../track/ID
+    if (uri.starts_with("spotify:")) uri.erase(0, 8);
+    std::ranges::replace(uri, ':', '/');
+    return "https://open.spotify.com/" + uri; // spotify:track:ID -> .../track/ID
 }
 
 // Resolve a track's cover via Spotify's public oEmbed endpoint (no auth).
@@ -81,10 +82,19 @@ std::wstring quote(const std::wstring& s) {
     std::wstring out{L"\""};
     for (std::size_t i = 0; i < s.size();) {
         std::size_t bs = 0;
-        while (i < s.size() && s[i] == L'\\') { ++bs; ++i; }
-        if (i == s.size())      out.append(bs * 2, L'\\');
-        else if (s[i] == L'"') { out.append(bs * 2 + 1, L'\\'); out += s[i++]; }
-        else                   { out.append(bs, L'\\');         out += s[i++]; }
+        while (i < s.size() && s[i] == L'\\') {
+            ++bs;
+            ++i;
+        }
+        if (i == s.size()) {
+            out.append(bs * 2, L'\\');
+        } else if (s[i] == L'"') {
+            out.append(bs * 2 + 1, L'\\');
+            out += s[i++];
+        } else {
+            out.append(bs, L'\\');
+            out += s[i++];
+        }
     }
     out += L'"';
     return out;
@@ -149,51 +159,52 @@ HANDLE spawn_in_job(HANDLE job, const std::wstring& cmd, HANDLE stdin_h, HANDLE 
 } // namespace
 
 struct SpotifySource::Pipe {
-    HANDLE job         = nullptr;
-    HANDLE proc_spot   = nullptr;
-    HANDLE proc_ff     = nullptr;
-    HANDLE read_pipe   = nullptr;
+    HANDLE job       = nullptr;
+    HANDLE proc_spot = nullptr;
+    HANDLE proc_ff   = nullptr;
+    HANDLE read_pipe = nullptr;
     // log parsing
-    HANDLE err_pipe    = nullptr; 
-    HANDLE log_file    = nullptr;
+    HANDLE err_pipe = nullptr;
+    HANDLE log_file = nullptr;
     std::string err_buf;
-    bool ended         = false;
+    bool ended = false;
 
     // tracks the total PCM bytes pumped to calculate UI time syncing
     uint64_t bytes_consumed = 0;
 
     // gapless & prefetch tracking
-    std::string loading_uri;   // Spotify URI from the most recent "Loading <...>" line
-    std::string pending_uri;   // URI paired with pending_title
+    std::string loading_uri; // Spotify URI from the most recent "Loading <...>" line
+    std::string pending_uri; // URI paired with pending_title
     std::string pending_title;
     std::string pending_artist;
     std::string pending_album;
     uint64_t pending_duration_ms = 0;
-    uint64_t track_duration_ms = 0;
-    bool has_pending = false;
-    int stall_ticks = 0;
-    bool force_next_metadata = false;
-    bool awaiting_first_track = true; // no real track adopted yet
+    uint64_t track_duration_ms   = 0;
+    bool has_pending             = false;
+    int stall_ticks              = 0;
+    bool force_next_metadata     = false;
+    bool awaiting_first_track    = true; // no real track adopted yet
 
-    enum class MetaContext { None, Track, Album, Artist };
+    enum class MetaContext : std::uint8_t { None, Track, Album, Artist };
     MetaContext meta_context = MetaContext::None;
-    bool expecting_name = false;
+    bool expecting_name      = false;
     std::string next_meta_title;
     std::string next_meta_artist;
     std::string next_meta_album;
 
     ~Pipe() {
-        if (read_pipe)  CloseHandle(read_pipe);
-        if (err_pipe)   CloseHandle(err_pipe);
+        if (read_pipe) CloseHandle(read_pipe);
+        if (err_pipe) CloseHandle(err_pipe);
         if (log_file && log_file != INVALID_HANDLE_VALUE) CloseHandle(log_file);
-        if (job)        CloseHandle(job);
-        if (proc_spot)  CloseHandle(proc_spot);
-        if (proc_ff)    CloseHandle(proc_ff);
+        if (job) CloseHandle(job);
+        if (proc_spot) CloseHandle(proc_spot);
+        if (proc_ff) CloseHandle(proc_ff);
     }
 };
 
-SpotifySource::SpotifySource(SpotifyConfig cfg, std::filesystem::path ffmpeg_path) : cfg_{std::move(cfg)}, ffmpeg_path_{std::move(ffmpeg_path)} {
-    info_.title = "Ready to Cast";
+SpotifySource::SpotifySource(SpotifyConfig cfg, std::filesystem::path ffmpeg_path)
+    : cfg_{std::move(cfg)}, ffmpeg_path_{std::move(ffmpeg_path)} {
+    info_.title  = "Ready to Cast";
     info_.artist = "Spotify Connect";
 }
 
@@ -222,7 +233,7 @@ bool SpotifySource::initialize() {
 void SpotifySource::start_art_worker() {
     if (art_thr_.joinable()) return;
     art_stop_ = false;
-    art_thr_ = std::thread{[this] { artwork_worker(); }};
+    art_thr_  = std::thread{[this] { artwork_worker(); }};
 }
 
 void SpotifySource::stop_art_worker() noexcept {
@@ -254,7 +265,7 @@ void SpotifySource::artwork_worker() {
             if (art_stop_) return;
             uri = std::exchange(art_req_uri_, {});
         }
-        auto url = resolve_cover(uri);   // network, no locks held
+        auto url = resolve_cover(uri); // network, no locks held
         if (!url) continue;
         std::scoped_lock lk{mu_};
         if (info_uri_ == uri) info_.artwork_url = std::move(*url);
@@ -322,12 +333,21 @@ void SpotifySource::start_pipe_locked() {
     // read end would never see EOF when ffmpeg exits. The ffmpeg-side ends are
     // re-enabled just before ffmpeg is spawned.
     // reduced pipe size to 4KB (OS minimum) to eliminate residual data backlog
-    if (!CreatePipe(&spot_out_r, &spot_out_w, &sa, 4096)) { bail(); return; }
+    if (!CreatePipe(&spot_out_r, &spot_out_w, &sa, 4096)) {
+        bail();
+        return;
+    }
     SetHandleInformation(spot_out_r, HANDLE_FLAG_INHERIT, 0);
     // create error pipe and ensure read end isn't passed to children
-    if (!CreatePipe(&spot_err_r, &spot_err_w, &sa, 4096)) { bail(); return; }
+    if (!CreatePipe(&spot_err_r, &spot_err_w, &sa, 4096)) {
+        bail();
+        return;
+    }
     SetHandleInformation(spot_err_r, HANDLE_FLAG_INHERIT, 0);
-    if (!CreatePipe(&ff_out_r, &ff_out_w, &sa, 4096)) { bail(); return; }
+    if (!CreatePipe(&ff_out_r, &ff_out_w, &sa, 4096)) {
+        bail();
+        return;
+    }
     SetHandleInformation(ff_out_r, HANDLE_FLAG_INHERIT, 0);
     SetHandleInformation(ff_out_w, HANDLE_FLAG_INHERIT, 0);
 
@@ -337,40 +357,37 @@ void SpotifySource::start_pipe_locked() {
         SetHandleInformation(pipe->log_file, HANDLE_FLAG_INHERIT, 0); // ffmpeg only, not librespot
 
     const auto spot = cfg_.librespot_path.empty() ? L"librespot" : cfg_.librespot_path.wstring();
-    const std::wstring ff = ffmpeg_path_.empty() ? std::wstring{L"ffmpeg"}
-                                                 : ffmpeg_path_.wstring();
-    const auto cache = cfg_.cache_dir.wstring();
-    const auto tmp_dir = (cfg_.cache_dir / L"tmp").wstring();
+    const std::wstring ff = ffmpeg_path_.empty() ? std::wstring{L"ffmpeg"} : ffmpeg_path_.wstring();
+    const auto cache      = cfg_.cache_dir.wstring();
+    const auto tmp_dir    = (cfg_.cache_dir / L"tmp").wstring();
 
-    std::wstring spot_cmd = quote(spot) +
-                            L" --name \"FH6 Universal Radio\"" +
-                            L" --bitrate 320" +
-                            L" --backend pipe" +
-                            L" --initial-volume 100" +
-                            L" --cache " + quote(cache) +
-                            L" --tmp " + quote(tmp_dir) +
-                            L" --disable-audio-cache";
+    std::wstring spot_cmd = quote(spot) + L" --name \"FH6 Universal Radio\"" + L" --bitrate 320" +
+                            L" --backend pipe" + L" --initial-volume 100" + L" --cache " +
+                            quote(cache) + L" --tmp " + quote(tmp_dir) + L" --disable-audio-cache";
 
     // librespot defaults to 44100Hz s16le. We must resample to 48000Hz for FH6.
     // added flags to disable FFmpeg internal buffering for perfect UI sync
-    std::wstring ff_cmd = quote(ff) + 
-                          L" -loglevel error" +
-                          L" -fflags nobuffer -flags low_delay" + 
+    std::wstring ff_cmd = quote(ff) + L" -loglevel error" + L" -fflags nobuffer -flags low_delay" +
                           L" -blocksize 4096" + // force micro-block processing
-                          L" -f s16le -ar 44100 -ac 2 -i pipe:0" +
-                          L" -flush_packets 1" + 
+                          L" -f s16le -ar 44100 -ac 2 -i pipe:0" + L" -flush_packets 1" +
                           L" -f s16le -acodec pcm_s16le -ar 48000 -ac 2 pipe:1";
 
     // request debug logs for the player module to intercept Seek events & metadata
-    SetEnvironmentVariableW(L"RUST_LOG", L"librespot_playback::player=debug,librespot_metadata=trace");
+    SetEnvironmentVariableW(L"RUST_LOG",
+                            L"librespot_playback::player=debug,librespot_metadata=trace");
 
     // pass spot_err_w to librespot instead of the raw file
     pipe->proc_spot = spawn_in_job(pipe->job, spot_cmd, nul_in, spot_out_w, spot_err_w);
     SetEnvironmentVariableW(L"RUST_LOG", nullptr);
     // librespot owns its inherited stdin/stdout/stderr now; drop the parent copies.
-    CloseHandle(spot_out_w); spot_out_w = nullptr;
-    CloseHandle(spot_err_w); spot_err_w = nullptr;
-    if (nul_in) { CloseHandle(nul_in); nul_in = nullptr; }
+    CloseHandle(spot_out_w);
+    spot_out_w = nullptr;
+    CloseHandle(spot_err_w);
+    spot_err_w = nullptr;
+    if (nul_in) {
+        CloseHandle(nul_in);
+        nul_in = nullptr;
+    }
 
     if (!pipe->proc_spot) {
         log::warn("[spotify] failed to launch librespot ({}) -- check {}", GetLastError(),
@@ -388,8 +405,10 @@ void SpotifySource::start_pipe_locked() {
 
     // FFmpeg can keep logging to the file directly
     pipe->proc_ff = spawn_in_job(pipe->job, ff_cmd, spot_out_r, ff_out_w, pipe->log_file);
-    CloseHandle(spot_out_r); spot_out_r = nullptr;
-    CloseHandle(ff_out_w);   ff_out_w = nullptr;
+    CloseHandle(spot_out_r);
+    spot_out_r = nullptr;
+    CloseHandle(ff_out_w);
+    ff_out_w = nullptr;
 
     if (!pipe->proc_ff) {
         log::warn("[spotify] failed to launch ffmpeg ({}) -- check {}", GetLastError(),
@@ -402,7 +421,7 @@ void SpotifySource::start_pipe_locked() {
     pipe->read_pipe = ff_out_r;
     pipe_           = std::move(pipe);
 
-    info_.title = "Streaming via Spotify Connect";
+    info_.title  = "Streaming via Spotify Connect";
     info_.artist = "Spotify";
     info_.album.clear();
     info_.artwork_url.clear();
@@ -426,9 +445,7 @@ void SpotifySource::play() {
     state_.store(PlaybackState::playing, std::memory_order_release);
 }
 
-void SpotifySource::pause() {
-    state_.store(PlaybackState::paused, std::memory_order_release);
-}
+void SpotifySource::pause() { state_.store(PlaybackState::paused, std::memory_order_release); }
 
 void SpotifySource::stop() {
     std::scoped_lock lk{mu_};
@@ -437,8 +454,8 @@ void SpotifySource::stop() {
 
 void SpotifySource::transport_skip(bool forward) {
     // Prefer background SMTC control; fall back to synthesizing the media key.
-    const bool sent = forward ? external_audio_media_session_next("")
-                              : external_audio_media_session_previous("");
+    const bool sent =
+        forward ? external_audio_media_session_next("") : external_audio_media_session_previous("");
     if (!sent) send_media_key(forward ? VK_MEDIA_NEXT_TRACK : VK_MEDIA_PREV_TRACK);
 
     std::scoped_lock lk{mu_};
@@ -483,20 +500,21 @@ void SpotifySource::pump(RingBuffer& ring) {
     // non-blocking parse of track metadata
     if (p->err_pipe) {
         DWORD err_avail = 0;
-        while (PeekNamedPipe(p->err_pipe, nullptr, 0, nullptr, &err_avail, nullptr) && err_avail > 0) {
+        while (PeekNamedPipe(p->err_pipe, nullptr, 0, nullptr, &err_avail, nullptr) &&
+               err_avail > 0) {
             char buf[1024];
             DWORD to_read = std::min<DWORD>(err_avail, (DWORD)sizeof(buf));
-            DWORD got = 0;
+            DWORD got     = 0;
             if (!ReadFile(p->err_pipe, buf, to_read, &got, nullptr) || got == 0) break;
-            
+
             p->err_buf.append(buf, got);
-            
+
             // process all complete lines
             size_t pos;
             while ((pos = p->err_buf.find('\n')) != std::string::npos) {
                 std::string line = p->err_buf.substr(0, pos);
                 p->err_buf.erase(0, pos + 1);
-                
+
                 // strip Windows carriage return if it exists
                 if (!line.empty() && line.back() == '\r') line.pop_back();
 
@@ -512,11 +530,13 @@ void SpotifySource::pump(RingBuffer& ring) {
 
                 if (!is_trace_block && p->log_file && p->log_file != INVALID_HANDLE_VALUE) {
                     std::string out_line = line + "\r\n";
-                    DWORD w = 0;
-                    WriteFile(p->log_file, out_line.data(), static_cast<DWORD>(out_line.size()), &w, nullptr);
+                    DWORD w              = 0;
+                    WriteFile(p->log_file, out_line.data(), static_cast<DWORD>(out_line.size()), &w,
+                              nullptr);
                 }
 
-                if (is_trace_start && line.find("Received metadata: Track {") != std::string::npos) {
+                if (is_trace_start &&
+                    line.find("Received metadata: Track {") != std::string::npos) {
                     p->meta_context = Pipe::MetaContext::Track;
                     p->next_meta_title.clear();
                     p->next_meta_artist.clear();
@@ -533,15 +553,19 @@ void SpotifySource::pump(RingBuffer& ring) {
                         p->expecting_name = true;
                     } else if (p->expecting_name) {
                         size_t start = line.find_first_of('"');
-                        size_t end = line.find_last_of('"');
+                        size_t end   = line.find_last_of('"');
                         if (start != std::string::npos && end != std::string::npos && start < end) {
-                            std::string val = unescape_debug(line.substr(start + 1, end - start - 1));
+                            std::string val =
+                                unescape_debug(line.substr(start + 1, end - start - 1));
 
-                            if (p->meta_context == Pipe::MetaContext::Track && p->next_meta_title.empty()) {
+                            if (p->meta_context == Pipe::MetaContext::Track &&
+                                p->next_meta_title.empty()) {
                                 p->next_meta_title = val;
-                            } else if (p->meta_context == Pipe::MetaContext::Album && p->next_meta_album.empty()) {
+                            } else if (p->meta_context == Pipe::MetaContext::Album &&
+                                       p->next_meta_album.empty()) {
                                 p->next_meta_album = val;
-                            } else if (p->meta_context == Pipe::MetaContext::Artist && p->next_meta_artist.empty()) {
+                            } else if (p->meta_context == Pipe::MetaContext::Artist &&
+                                       p->next_meta_artist.empty()) {
                                 p->next_meta_artist = val;
                             }
                         }
@@ -563,39 +587,44 @@ void SpotifySource::pump(RingBuffer& ring) {
 
                 // catch seek events from librespot to sync UI timer on scrub
                 const std::string seek_marker = "command=Seek(";
-                size_t seek_pos = line.find(seek_marker);
+                size_t seek_pos               = line.find(seek_marker);
                 if (seek_pos != std::string::npos) {
-                    size_t end = line.find(")", seek_pos);
+                    size_t end = line.find(')', seek_pos);
                     if (end != std::string::npos) {
                         try {
-                            uint64_t parsed_seek = std::stoull(line.substr(seek_pos + seek_marker.length(), end - (seek_pos + seek_marker.length())));
+                            uint64_t parsed_seek =
+                                std::stoull(line.substr(seek_pos + seek_marker.length(),
+                                                        end - (seek_pos + seek_marker.length())));
                             p->bytes_consumed = parsed_seek * kBytesPerMs;
                         } catch (...) {}
                         continue; // parsed successfully, move to next line
                     }
                 }
-                
+
                 // look for the track load event signature
                 const std::string marker = "librespot_playback::player] <";
-                size_t m_pos = line.find(marker);
+                size_t m_pos             = line.find(marker);
                 if (m_pos != std::string::npos) {
                     size_t start = m_pos + marker.length();
-                    size_t end = line.find("> (", start);
+                    size_t end   = line.find("> (", start);
                     if (end != std::string::npos) {
                         std::string parsed_title = line.substr(start, end - start);
-                        
+
                         // extract the duration e.g. "> (___ ms) loaded"
                         uint64_t parsed_duration = 0;
-                        size_t ms_start = end + 3; 
-                        size_t ms_end = line.find(" ms) loaded", ms_start);
+                        size_t ms_start          = end + 3;
+                        size_t ms_end            = line.find(" ms) loaded", ms_start);
                         if (ms_end != std::string::npos) {
                             try {
-                                parsed_duration = std::stoull(line.substr(ms_start, ms_end - ms_start));
+                                parsed_duration =
+                                    std::stoull(line.substr(ms_start, ms_end - ms_start));
                             } catch (...) {}
                         }
 
-                        std::string final_title = p->next_meta_title.empty() ? parsed_title : p->next_meta_title;
-                        std::string final_artist = p->next_meta_artist.empty() ? "Spotify Connect" : p->next_meta_artist;
+                        std::string final_title =
+                            p->next_meta_title.empty() ? parsed_title : p->next_meta_title;
+                        std::string final_artist =
+                            p->next_meta_artist.empty() ? "Spotify Connect" : p->next_meta_artist;
                         std::string final_album = p->next_meta_album; // can be empty
 
                         // A load event while we're still >32 s from the current
@@ -607,20 +636,20 @@ void SpotifySource::pump(RingBuffer& ring) {
 
                         // First track, an explicit skip, or an in-app skip: apply at once.
                         if (p->awaiting_first_track || p->force_next_metadata || is_external_skip) {
-                            apply_info(final_title, final_artist, final_album,
-                                       parsed_duration, p->loading_uri);
-                            p->bytes_consumed = 0;
+                            apply_info(final_title, final_artist, final_album, parsed_duration,
+                                       p->loading_uri);
+                            p->bytes_consumed       = 0;
                             p->awaiting_first_track = false;
-                            p->force_next_metadata = false;
-                            p->stall_ticks = 0;
+                            p->force_next_metadata  = false;
+                            p->stall_ticks          = 0;
                         } else {
                             // queue it for the gapless transition
-                            p->pending_title = final_title;
-                            p->pending_artist = final_artist;
-                            p->pending_album = final_album;
+                            p->pending_title       = final_title;
+                            p->pending_artist      = final_artist;
+                            p->pending_album       = final_album;
                             p->pending_duration_ms = parsed_duration;
-                            p->pending_uri = p->loading_uri;
-                            p->has_pending = true;
+                            p->pending_uri         = p->loading_uri;
+                            p->has_pending         = true;
                         }
                     }
                 }
@@ -638,7 +667,7 @@ void SpotifySource::pump(RingBuffer& ring) {
         return;
     }
 
-   if (avail == 0) {
+    if (avail == 0) {
         p->stall_ticks++;
         // if pipe is dry for just 5 ticks (~80ms)
         if (p->stall_ticks > 5) {
@@ -665,7 +694,7 @@ void SpotifySource::pump(RingBuffer& ring) {
                        p->pending_duration_ms, p->pending_uri);
             // carry the remainder so the timer stays exact
             p->bytes_consumed -= track_bytes;
-            p->stall_ticks = 0;
+            p->stall_ticks     = 0;
         }
     }
 
@@ -676,8 +705,8 @@ void SpotifySource::pump(RingBuffer& ring) {
         const std::size_t writable = ring.writable();
         if (writable < 4) break;
 
-        std::size_t want = std::min<std::size_t>({static_cast<std::size_t>(avail), writable,
-                                                  kMaxBufferBytes - buffered, kPipeChunk});
+        auto want = std::min<std::size_t>(
+            {static_cast<std::size_t>(avail), writable, kMaxBufferBytes - buffered, kPipeChunk});
 
         std::byte buf[kPipeChunk];
         DWORD got = 0;
@@ -688,7 +717,7 @@ void SpotifySource::pump(RingBuffer& ring) {
 
         ring.write(buf, got);
         p->bytes_consumed += got; // track exact bytes pushed to the stream
-        avail = avail > got ? avail - got : 0;
+        avail              = avail > got ? avail - got : 0;
     }
 
     // UI timer = bytes pushed minus what's still queued ahead in the ring.
