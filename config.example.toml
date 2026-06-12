@@ -8,12 +8,12 @@
 [general]
 port              = 8420
 ring_buffer_mb    = 4
-default_source    = "online_radio"    # local_files | online_radio | youtube_music | jellyfin | external_audio | spotify
-fallback_source   = "local_files"
+default_source    = "local_files"    # local_files | online_radio | youtube_music | jellyfin | external_audio | spotify
+fallback_source   = "online_radio"
 ffmpeg_path       = ''                # blank = auto-download to fh6-radio/bin (else `ffmpeg` on PATH); shared by all sources
 
 [local_files]
-enabled            = false
+enabled            = true
 active_station     = "My Music"        # which preset is on air
 # mp3/flac/wav/ogg decode natively; the rest goes through ffmpeg if available.
 supported_formats  = ["mp3", "flac", "wav", "ogg", "m4a", "opus", "aac", "wma", "aiff", "aif", "m3u", "m3u8"]
@@ -22,7 +22,7 @@ supported_formats  = ["mp3", "flac", "wav", "ogg", "m4a", "opus", "aac", "wma", 
 # can point at several folders, exclude subfolders, and set its own play order.
 [[local_files.station]]
 name      = "My Music"
-roots     = []                         # e.g. ['C:\Users\you\Music', 'D:\FLAC']
+roots     = ['f:\Games\Forza Horizon 6\fh6-radio\Music']                         # e.g. ['C:\Users\you\Music', 'D:\FLAC']
 excluded  = []                         # subfolders to skip, e.g. ['C:\Users\you\Music\Audiobooks']
 recursive = true
 order     = "shuffle"                  # "shuffle" | "album" | "name" | "folder"
@@ -82,9 +82,9 @@ default_station_index = 0 # index of radio station in list (0 refers to start of
 output_gain = 1.0
 
 [playback]
-race_start_playback  = "next"      # "next" | "restart" | "ignore" -- action when a race begins
-quick_station_skip   = false       # tune the radio away and back within 1s to skip the track
-volume_normalization = false       # apply ReplayGain (local files) / EBU R128 loudnorm (YT) when on
+race_start_playback  = "off"      # "next" | "restart" | "ignore" | "off" -- action when a race begins
+quick_station_skip   = true       # tune the radio away and back within 1s to skip the track
+volume_normalization = true       # apply ReplayGain (local files) / EBU R128 loudnorm (YT) when on
 equalizer_enabled    = false
 equalizer_bands      = [0.0, 0.0, 0.0, 0.0, 0.0]   # 60/250/1000/4000/12000 Hz, [-6, +6] dB
 force_stereo_audio   = true        # off => mono (avoids metallic phase-cancellation on the 3D radio channel)
