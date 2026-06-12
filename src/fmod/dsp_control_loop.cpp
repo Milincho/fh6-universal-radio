@@ -266,6 +266,10 @@ void ControlLoop::run_playback_state_machines(time_point now) noexcept {
         } else if (mode == "restart") {
             fired   = active->restart_current();
             outcome = fired ? "restarted current track" : "could not restart current track";
+        } else if (mode == "off") {
+            active->pause();
+            fired   = true;
+            outcome = "paused playback";
         }
         if (fired) {
             ring.drain();
