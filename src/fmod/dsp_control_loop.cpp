@@ -239,6 +239,7 @@ void ControlLoop::run_playback_state_machines(time_point now) noexcept {
     if (!active) {
         prev_r10_ = prev_race_ = prev_race_restart_ = false;
         paused_by_race_off_ = false;
+        first_connection_   = true;
         quick_skip_armed_                           = false;
         return;
     }
