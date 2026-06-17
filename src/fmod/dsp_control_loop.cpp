@@ -93,7 +93,16 @@ void ControlLoop::run(const std::stop_token& tok) {
         // now-playing banner on every pause/rewind.
         if (++meta_tick >= kMetaEveryNTicks) {
             meta_tick = 0;
-            if (radio_audible_) push_metadata();
+            if (radio_audible_) {
+                // re-poll the discovery cache to grab the freshest SampleProperties body
+                // the game often reallocates this object entirely when native stations change
+                auto disc = discover_radio_instances(img_);
+                if (const RadioInstance* current = select_instance(disc)) {
+                    meta_.set_target(current->sample_props_body);
+                }
+                
+                push_metadata();
+            }
         }
 
         // Staleness watchdog: while a source is actively producing audio,
@@ -308,6 +317,15 @@ void ControlLoop::push_metadata() noexcept {
         meta_.update("FH6 Universal Radio", "Idle");
         return;
     }
+
+    // if using vanilla radio, let the game handle its own native metadata
+    // reset the injector cache so that when we swap to a custom source,
+    // it will ovrewrite whatever native metadata the game wrote in the meantime
+    if (a->name() == "vanilla_radio") {
+        meta_.reset_cache();
+        return;
+    }
+
     TrackInfo info;
     try {
         info = a->current_track();
