@@ -250,6 +250,15 @@ void ControlLoop::run_playback_state_machines(time_point now) noexcept {
     // transitions even though the user stayed on our station, which used to
     // trip a phantom quickStationSkip on every race start.
     const bool r10 = game.on_target_station;
+
+    if (first_connection_) {
+        prev_race_         = game.race_active;
+        prev_race_restart_ = game.race_restart;
+        prev_r10_          = r10;
+        first_connection_  = false;
+        return;
+    }
+
     auto& ring     = bridge_.manager().ring();
 
     // --- raceStartPlayback (race_active edge, gated by R10 + debounces) ---
