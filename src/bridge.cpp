@@ -161,16 +161,25 @@ void run_bridge(HMODULE self) noexcept {
         if (!std::filesystem::exists(worker_exe))
             worker_exe = dir / "fh6-radio" / "fh6-radio-worker.exe";
         
-        // inherit the flag
-        SetEnvironmentVariableW(L"RUST_LOG", L"librespot_playback::player=debug,librespot_metadata=trace");
+        // Temporarily override RUST_LOG for worker launch, then restore prior value.
+        DWORD rust_log_len = GetEnvironmentVariableW(L"RUST_LOG", nullptr, 0);
+        std::wstring prev_rust_log;
+        const bool had_rust_log = rust_log_len > 0;
+        if (had_rust_log) {
+            prev_rust_log.resize(rust_log_len - 1); // exclude null terminator
+            GetEnvironmentVariableW(L"RUST_LOG", prev_rust_log.data(), rust_log_len);
+        }
+        SetEnvironmentVariableW(
+            L"RUST_LOG",
+            L"librespot_playback::player=debug,librespot_metadata=trace");
         
         if (worker.start(worker_exe))
             log::info("[bridge] worker process started");
         else
             log::warn("[bridge] worker process unavailable -- falling back to direct spawn");
     
-        // clear the flag
-        SetEnvironmentVariableW(L"RUST_LOG", nullptr);
+        if (had_rust_log) SetEnvironmentVariableW(L"RUST_LOG", prev_rust_log.c_str());
+        else SetEnvironmentVariableW(L"RUST_LOG", nullptr);
     }
 
     // Register/unregister sources to match the enabled flags. Called at
