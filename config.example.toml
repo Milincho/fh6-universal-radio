@@ -1,19 +1,19 @@
 # Example config, copied to `<game>/fh6-radio/config.toml` on first install.
 # Everything is editable from the dashboard; you only need to touch this file
-# if you prefer hand edits. Windows paths should use TOML literal strings 
-# (single quotes) so backslashes pass through verbatim:  
+# if you prefer hand edits. Windows paths should use TOML literal strings
+# (single quotes) so backslashes pass through verbatim:
 #
-#   roots = ['C:\Users\you\Music'] 
+#   roots = ['C:\Users\you\Music']
 
 [general]
 port              = 8420
 ring_buffer_mb    = 4
-default_source    = "local_files"    # local_files | online_radio | youtube_music | jellyfin | external_audio | spotify
-fallback_source   = "online_radio"
+default_source    = "online_radio"    # local_files | online_radio | youtube_music | jellyfin | external_audio | spotify
+fallback_source   = "local_files"
 ffmpeg_path       = ''                # blank = auto-download to fh6-radio/bin (else `ffmpeg` on PATH); shared by all sources
 
 [local_files]
-enabled            = true
+enabled            = false
 active_station     = "My Music"        # which preset is on air
 # mp3/flac/wav/ogg decode natively; the rest goes through ffmpeg if available.
 supported_formats  = ["mp3", "flac", "wav", "ogg", "m4a", "opus", "aac", "wma", "aiff", "aif", "m3u", "m3u8"]
@@ -22,7 +22,7 @@ supported_formats  = ["mp3", "flac", "wav", "ogg", "m4a", "opus", "aac", "wma", 
 # can point at several folders, exclude subfolders, and set its own play order.
 [[local_files.station]]
 name      = "My Music"
-roots     = ['f:\Games\Forza Horizon 6\fh6-radio\Music']                         # e.g. ['C:\Users\you\Music', 'D:\FLAC']
+roots     = []                         # e.g. ['C:\Users\you\Music', 'D:\FLAC']
 excluded  = []                         # subfolders to skip, e.g. ['C:\Users\you\Music\Audiobooks']
 recursive = true
 order     = "shuffle"                  # "shuffle" | "album" | "name" | "folder"
@@ -93,9 +93,9 @@ enabled               = false
 output_gain = 1.0
 
 [playback]
-race_start_playback  = "off"      # "next" | "restart" | "ignore" | "off" -- action when a race begins
-quick_station_skip   = true       # tune the radio away and back within 1s to skip the track
-volume_normalization = true       # apply ReplayGain (local files) / EBU R128 loudnorm (YT) when on
+race_start_playback  = "next"      # "next" | "restart" | "ignore" | "off" -- action when a race begins
+quick_station_skip   = false       # tune the radio away and back within 1s to skip the track
+volume_normalization = false       # apply ReplayGain (local files) / EBU R128 loudnorm (YT) when on
 equalizer_enabled    = false
 equalizer_bands      = [0.0, 0.0, 0.0, 0.0, 0.0]   # 60/250/1000/4000/12000 Hz, [-6, +6] dB
 force_stereo_audio   = true        # off => mono (avoids metallic phase-cancellation on the 3D radio channel)
