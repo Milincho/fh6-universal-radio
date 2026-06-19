@@ -25,6 +25,7 @@ namespace fh6::http {
 //   POST /api/source/switch               body {"source":"name"}
 //   POST /api/source/<name>/{play,pause,stop,next,previous}
 //
+//   POST /api/source/youtube_music/cast     body {"url":"..."}
 //   POST /api/source/youtube_music/shuffle  body {"shuffle":true|false}
 //   GET  /api/source/youtube_music/stations
 //   PUT  /api/source/youtube_music/stations body {"stations":[...],"active_station":"..."}

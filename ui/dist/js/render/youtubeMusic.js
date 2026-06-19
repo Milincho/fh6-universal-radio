@@ -24,6 +24,7 @@ export function createYoutubeMusic(main, ctx) {
   const deleteBtn = el("button", { type: "button", class: "btn ghost" }, "Delete");
 
   const urlInput = el("input", { type: "text", class: "lf-path-input", placeholder: "https://music.youtube.com/playlist?list=...", autocomplete: "off" });
+  const castBtn = el("button", { type: "button", class: "btn ghost" }, "Cast");
   const saveBtn = el("button", { type: "button", class: "btn filled" }, "Save");
 
   const queueCount = el("span", { class: "muted" });
@@ -38,7 +39,7 @@ export function createYoutubeMusic(main, ctx) {
     el("div", { class: "lf-editor" }, [
       el("label", { class: "field-label" }, "Playlist or Video URL"),
       urlInput,
-      el("div", { class: "row lf-editor-foot" }, [saveBtn]),
+      el("div", { class: "row lf-editor-foot" }, [castBtn, saveBtn]),
     ]),
     el("div", { class: "lf-queue" }, [
       el("div", { class: "lf-queue-head row" }, [
@@ -167,16 +168,13 @@ export function createYoutubeMusic(main, ctx) {
     renderEditor();
   });
 
-  urlInput.addEventListener("input", () => {
-    if (cur()) cur().url = urlInput.value.trim();
-  });
-
   searchInput.addEventListener("input", () => {
     search = searchInput.value;
     renderQueue();
   });
 
   saveBtn.addEventListener("click", async () => {
+    if (cur()) cur().url = urlInput.value.trim();
     try {
       await api.putYoutubeStations(stations, activeStation);
       toast("Saved YouTube Music stations");
@@ -184,6 +182,27 @@ export function createYoutubeMusic(main, ctx) {
       loadQueue();
     } catch (e) {
       toast(e.message, true);
+    }
+  });
+
+  castBtn.addEventListener("click", async () => {
+    const url = urlInput.value.trim();
+    if (!url) return;
+
+    urlInput.disabled = true;
+    castBtn.disabled = true;
+    
+    try {
+      await api.castYoutube(url);
+      toast("Casting to YouTube Music...");
+      urlInput.value = "";
+      await ctx.onSaved?.();
+      loadQueue();
+    } catch (e) {
+      toast(e.message, true);
+    } finally {
+      urlInput.disabled = false;
+      castBtn.disabled = false;
     }
   });
 

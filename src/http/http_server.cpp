@@ -752,7 +752,7 @@ struct HttpServer::Impl {
             mgr.switch_to("local_files");
             return ok(json{{"track_count", lf->track_count()}});
         }
-        if (m == "POST" && p == "/api/source/local_files/play") {
+        if (m == "POST" && p == "/api/source/local_files/play" && !req.body.empty()) {
             auto* lf = find_typed<sources::LocalFileSource>("local_files");
             if (!lf) return fail(404, "local_files not registered");
             auto idx              = json::parse(req.body).value("index", std::size_t{0});
@@ -831,6 +831,18 @@ struct HttpServer::Impl {
                            {"endpoint_id", snap.external_audio.endpoint_id},
                            {"media_session_id", snap.external_audio.media_session_id}});
         }
+        if (m == "POST" && p == "/api/source/youtube_music/cast") {
+            auto* yt = find_typed<sources::YouTubeMusicSource>("youtube_music");
+            if (!yt) return fail(404, "youtube_music not registered");
+            auto url              = json::parse(req.body).at("url").get<std::string>();
+            const bool was_active = (mgr.active() == yt);
+            yt->stop();
+            yt->set_target(std::move(url));
+            if (was_active) mgr.ring().drain();
+            yt->play();
+            mgr.switch_to("youtube_music");
+            return ok();
+        }
         if (m == "POST" && p == "/api/source/youtube_music/shuffle") {
             auto* yt = find_typed<sources::YouTubeMusicSource>("youtube_music");
             if (!yt) return fail(404, "youtube_music not registered");
@@ -885,7 +897,7 @@ struct HttpServer::Impl {
             return ok(json{{"cursor", snap.cursor}, {"tracks", tracks}});
         }
 
-        if (m == "POST" && p == "/api/source/youtube_music/play") {
+        if (m == "POST" && p == "/api/source/youtube_music/play" && !req.body.empty()) {
             auto* yt = find_typed<sources::YouTubeMusicSource>("youtube_music");
             if (!yt) return fail(404, "youtube_music not registered");
             auto idx              = json::parse(req.body).value("index", std::size_t{0});

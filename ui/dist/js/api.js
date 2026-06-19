@@ -20,6 +20,7 @@ export const api = {
   transport: (source, action) => request(`/api/source/${source}/${action}`, { method: "POST" }),
   castOnlineRadio: (url, opts = {}) =>
     request("/api/source/online_radio/cast", { method: "POST", body: { url, ...opts } }),
+  castYoutube: url => request("/api/source/youtube_music/cast", { method: "POST", body: { url } }),
   shuffleYoutube: shuffle =>
     request("/api/source/youtube_music/shuffle", { method: "POST", body: { shuffle } }),
   getYoutubeStations: () => request("/api/source/youtube_music/stations"),
